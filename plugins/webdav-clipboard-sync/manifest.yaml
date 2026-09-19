@@ -1,0 +1,63 @@
+# =============================================
+# Xime Lua 插件元数据（宿主用 YAML 解析）
+# =============================================
+
+# 插件唯一标识
+id: com.kingzcheung.xime.plugin.webdav_clipboard_sync
+
+# 插件名称与描述
+name: WebDAV 剪贴板同步
+icon: "☁️"
+description: 通过 WebDAV 文件同步剪贴板（文本，多设备）,目前仅测试了坚果云盘的 WebDAV 接口。
+
+# 插件版本（字符串）
+version: 0.1.0
+
+# 插件分类：clipboard_sync 剪贴板同步（单选激活）
+type: clipboard_sync
+activation: single
+
+# 入口脚本
+entry: main.lua
+
+# 宿主最低版本要求
+minHostVersion: 2.6.0
+
+# 能力声明
+capabilities:
+  clipboard_sync:
+    protocols:
+      - webdav   # 通过 WebDAV 同步剪贴板（与 ximed WebDavTransport 协议一致）
+
+# 网络访问声明：服务器地址由用户配置，域名不固定。
+# allowCustomHosts: 接受用户填写的服务器地址域名，经配置后自动授权联网
+network:
+  hosts: []
+  allowCustomHosts: true
+
+# 配置字段声明（插件中心直接渲染表单）
+configSchema:
+  - key: davUrl
+    label: WebDAV 服务器
+    type: text
+    placeholder: https://host:port/dav/
+    helpText: WebDAV 服务地址（形如 https://192.168.1.50:8080/dav/，需支持 Basic Auth 的 PUT/GET）
+  - key: remotePath
+    label: 远程目录
+    type: text
+    placeholder: xime
+    required: false
+    helpText: 剪贴板文件所在目录（留空为根目录，同步到 {地址}/{目录}/clipboard/current.json）
+  - key: username
+    label: 用户名
+    type: text
+    required: false
+  - key: password
+    label: 密码
+    type: secret
+    required: false
+  - key: testConnection
+    label: 测试连接
+    type: button
+    action: testConnection
+    required: false

@@ -1,0 +1,17 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "assembleDebug",
+			"type": "shell",
+			"command": "./build.sh",
+			"problemMatcher": [
+				"$kotlinc"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		}
+	]
+}

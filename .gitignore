@@ -1,0 +1,62 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+/.idea/deploymentTargetSelector.xml
+/.idea/misc.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+signing-key-base64.txt
+# APK签名密钥文件（不要提交到Git）
+*.keystore
+node_modules
+*.jks
+keystore-base64.txt
+PROGRESS.md
+DECISIONS.md
+# librime and its dependencies
+app/src/main/jni/librime/
+app/src/main/jni/snappy/
+app/src/main/jni/boost*
+app/src/main/jni/onnxruntime/
+app/src/main/jniLibs/
+app/src/main/jni/librime-t9/build_test/
+app/release
+# Large archives
+*.tar.xz
+*.tar.gz
+*.zip
+/.agents
+Chaquopy/
+# Association model weights (large files, manually placed)
+app/src/main/assets/association_model
+
+/.kilo
+/.kotlin
+
+# Plugin module builds
+plugin-api/build
+plugins/funasr-speech/build
+plugins/meme-bunny/build
+plugins/kaomoji/build
+
+# Plugin packages (development only, not packaged in main app)
+app/src/main/assets/plugins/*.xipk
+
+/.skills
+fix_encoding.py
+perf.data
+xime_heap.hprof
+app/src/main/jni/ncnn-build
+app/src/main/jni/ncnn
+# Downloaded at build time by gradle task downloadKnf
+app/src/main/jni/third_party/

@@ -1,0 +1,881 @@
+package com.kingzcheung.xime.ui.settings
+
+import android.content.Intent
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.util.Log
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AddBox
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.FileOpen
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.twotone.Storefront
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.kingzcheung.xime.plugin.core.api.PluginIcon
+import com.kingzcheung.xime.plugin.core.model.Activation
+import com.kingzcheung.xime.plugin.core.model.PluginCategory
+import com.kingzcheung.xime.plugin.core.model.PluginSource
+import com.kingzcheung.xime.plugin.core.model.PluginInfo
+import com.kingzcheung.xime.plugin.core.model.TrustLevel
+import com.kingzcheung.xime.plugin.core.runtime.PluginManager
+import com.kingzcheung.xime.plugin.core.security.PluginErrorLog
+import com.kingzcheung.xime.settings.SettingsPreferences
+import com.kingzcheung.xime.viewmodel.PluginsSettingsViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PluginsSettingsContent(
+    onBack: () -> Unit,
+    onNavigateToPluginSettings: (String) -> Unit = {},
+    onNavigateToPluginMarketDetail: (String) -> Unit = {},
+    onNavigateToSpeechToText: () -> Unit = {},
+    onNavigateToClipboardSync: () -> Unit = {}
+) {
+    val context = LocalContext.current
+    val viewModel: PluginsSettingsViewModel = viewModel()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val importMessage by viewModel.importMessage.collectAsState()
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        uris.forEach { viewModel.installPluginFromUri(it) }
+    }
+
+    var showWirelessSheet by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
+
+    LaunchedEffect(importMessage) {
+        if (importMessage != null) {
+            Toast.makeText(context, importMessage, Toast.LENGTH_SHORT).show()
+            viewModel.consumeImportMessage()
+        }
+    }
+
+    if (showWirelessSheet) {
+        WirelessImportSheet(
+            onDismiss = {
+                showWirelessSheet = false
+                viewModel.refreshPlugins()
+            },
+            onRefresh = { viewModel.refreshPlugins() }
+        )
+    }
+    
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.surface,
+        topBar = {
+            TopAppBar(
+                title = { Text("插件管理") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "返回"
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { viewModel.refreshPlugins() }) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "刷新"
+                        )
+                    }
+                    Box {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "更多")
+                        }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false },
+                            offset = DpOffset(0.dp, 4.dp),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("从文件安装插件") },
+                                onClick = {
+                                    showMenu = false
+                                    importLauncher.launch(arrayOf("*/*"))
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.FileOpen, null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp))
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("浏览器导入") },
+                                onClick = {
+                                    showMenu = false
+                                    showWirelessSheet = true
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Wifi, null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp))
+                                }
+                            )
+                        }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                ),
+            )
+        }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .background(MaterialTheme.colorScheme.surface),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+        ) {
+            if (uiState.isLoading) {
+                item {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                }
+            } else if (uiState.errorMsg != null) {
+                item {
+                    Text(
+                        text = "加载失败: ${uiState.errorMsg}",
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            } else {
+                if (uiState.extensions.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AddBox,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(48.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                                Text(
+                                    text = "暂无已安装的插件",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "安装插件后将在此显示",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    val activeAsrPluginId = SettingsPreferences.getSttOnlinePluginId(context)
+                    val activeClipboardSyncPluginId = SettingsPreferences.getClipboardSyncPluginId(context)
+                    items(uiState.extensions, key = { it.id }) { extension ->
+                        ExtensionItem(
+                            extension = extension,
+                            pluginInstance = PluginManager.getPluginInstance(extension.id),
+                            icon = uiState.icons[extension.id],
+                            viewModel = viewModel,
+                            onClick = { onNavigateToPluginSettings(extension.id) },
+                            onOpenMarketDetail = { onNavigateToPluginMarketDetail(extension.id) },
+                            isActive = when (extension.category) {
+                                PluginCategory.ASR ->
+                                    extension.id == activeAsrPluginId
+                                PluginCategory.CLIPBOARD_SYNC ->
+                                    extension.id == activeClipboardSyncPluginId
+                                else -> false
+                            },
+                            onActivate = when (extension.category) {
+                                PluginCategory.ASR -> onNavigateToSpeechToText
+                                PluginCategory.CLIPBOARD_SYNC -> onNavigateToClipboardSync
+                                else -> null
+                            }
+                        )
+                    }
+                }
+                
+                item {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Text(
+                        text = "提示: 安装插件后点击右上角刷新按钮生效",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExtensionItem(
+    extension: PluginInfo,
+    pluginInstance: Any?,
+    icon: PluginIcon?,
+    viewModel: PluginsSettingsViewModel,
+    onClick: () -> Unit = {},
+    onOpenMarketDetail: () -> Unit = {},
+    isActive: Boolean = false,
+    onActivate: (() -> Unit)? = null
+) {
+    val context = LocalContext.current
+    var isEnabled by remember { mutableStateOf(viewModel.isPluginEnabled(extension.id)) }
+    var showErrorDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showTrustConfirm by remember { mutableStateOf(false) }
+    var trustConfirmAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    
+    val errors = PluginErrorLog.getErrors(extension.id)
+    val hasErrors = errors.isNotEmpty()
+
+    val hostCompatible = remember(extension.id) { viewModel.isHostCompatible(extension) }
+    val hostRange = remember(extension) {
+        buildString {
+            if (!extension.minHostVersion.isNullOrBlank()) append(extension.minHostVersion)
+            if (!extension.maxHostVersion.isNullOrBlank()) {
+                if (isNotEmpty()) append(" - ") else append("≤ ")
+                append(extension.maxHostVersion)
+            }
+        }
+    }
+    
+    val hasSettings = pluginInstance?.let {
+        (it as? com.kingzcheung.xime.plugin.core.config.IPluginConfigurable)
+            ?.getSettingsSchema()?.isNotEmpty() == true ||
+            (it as? com.kingzcheung.xime.plugin.core.api.EmojiPlugin)?.hasSettings() == true
+    } ?: false
+    
+    if (showErrorDialog && hasErrors) {
+        PluginErrorDialog(
+            pluginId = extension.id,
+            pluginName = extension.name,
+            errors = errors,
+            onDismiss = { showErrorDialog = false },
+            onClear = { 
+                PluginErrorLog.clearErrors(extension.id)
+                showErrorDialog = false
+            }
+        )
+    }
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onOpenMarketDetail() }
+                .padding(12.dp)
+        ) {
+            // 第一行：图标 + 标题 + 状态指示器
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PluginIconView(
+                    icon = icon,
+                    category = extension.category,
+                    modifier = Modifier.padding(end = 10.dp)
+                )
+
+                Text(
+                    text = extension.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                
+                // 状态指示器（固定在右侧）
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (hasErrors) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = "有错误",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+
+                    if (!hostCompatible) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = "与主应用版本不兼容",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+            }
+            
+            // 第二行：类型 + 版本
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = extension.category.label,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (isEnabled) MaterialTheme.colorScheme.primary 
+                           else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text("•", style = MaterialTheme.typography.bodySmall, 
+                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                Text(
+                    text = "${extension.versionName}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                
+                // 信任徽标
+                val trustBadge = trustBadge(extension.trustLevel)
+                Text("•", style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                Text(
+                    text = trustBadge.first,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = trustBadge.second
+                )
+            }
+            
+            // 详情
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                
+                if (extension.description.isNotEmpty()) {
+                    Text(
+                        text = extension.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
+
+                if (extension.declaredHosts.isNotEmpty()) {
+                    NetworkAccessSection(
+                        pluginId = extension.id,
+                        pluginName = extension.name,
+                        hosts = extension.declaredHosts
+                    )
+                }
+
+                if (!hostCompatible) {
+                    Text(
+                        text = "该插件不支持当前主应用版本，已跳过加载" +
+                            if (hostRange.isNotEmpty()) "（要求 $hostRange）" else "。请更新主应用后重试。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                    )
+                }
+
+                // 操作按钮行
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (extension.category.activation == Activation.SINGLE) {
+                        // 单选分类：激活在对应功能设置页完成，插件中心不显示启用开关
+                        if (!hostCompatible) {
+                            Text(
+                                text = "与主应用版本不兼容",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        } else {
+                            Text(
+                                text = if (isActive) "当前使用中" else "未使用",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (isActive) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.weight(1f))
+
+                        if (!hostCompatible && hostRange.isNotEmpty()) {
+                            Text(
+                                text = "要求 $hostRange",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            )
+                        } else if (!isActive && onActivate != null) {
+                            OutlinedButton(
+                                onClick = {
+                                    if (extension.trustLevel == TrustLevel.TRUSTED) {
+                                        onActivate()
+                                    } else {
+                                        trustConfirmAction = { onActivate() }
+                                        showTrustConfirm = true
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text("去选择", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    } else {
+                        // 多选分类：插件管理不提供启用开关，启用/停用在使用处进行（如表情面板）
+                        Text(
+                            text = when {
+                                !hostCompatible -> "不兼容"
+                                isEnabled -> "已启用"
+                                else -> "未启用"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (!hostCompatible)
+                                MaterialTheme.colorScheme.error
+                            else if (isEnabled)
+                                MaterialTheme.colorScheme.onSurface
+                            else
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+
+                    // 设置按钮
+                    if (hasSettings) {
+                        OutlinedButton(
+                            onClick = onClick,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("设置", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+
+                    // 删除按钮
+                    if (extension.source == PluginSource.SYSTEM) {
+                        IconButton(
+                            onClick = {
+                                try {
+                                    val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                                    intent.data = Uri.parse("package:${extension.id}")
+                                    context.startActivity(intent)
+                                    Toast.makeText(context, "请在应用信息页面卸载", Toast.LENGTH_SHORT).show()
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "无法打开: ${e.message}", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "卸载",
+                                 tint = MaterialTheme.colorScheme.error)
+                        }
+                    } else {
+                        IconButton(
+                            onClick = { showDeleteConfirm = true }
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "卸载",
+                                 tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("卸载插件") },
+            text = { Text("确定要卸载「${extension.name}」吗？\n插件文件和配置将被删除，此操作不可恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        viewModel.uninstallPlugin(extension.id)
+                    }
+                ) {
+                    Text("卸载", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    if (showTrustConfirm) {
+        val badge = trustBadge(extension.trustLevel)
+        AlertDialog(
+            onDismissRequest = {
+                showTrustConfirm = false
+                trustConfirmAction = null
+            },
+            title = { Text("启用非官方插件") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("插件「${extension.name}」未被标记为官方（${badge?.first ?: "未知来源"}）。")
+                    Text("非官方插件可能访问您输入的内容或网络，请确认来源可信后再启用。")
+                    if (extension.description.isNotEmpty()) {
+                        Text(
+                            text = "描述：${extension.description}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val action = trustConfirmAction
+                        showTrustConfirm = false
+                        trustConfirmAction = null
+                        action?.invoke()
+                    }
+                ) {
+                    Text("继续启用")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showTrustConfirm = false
+                    trustConfirmAction = null
+                }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+}
+
+// 插件网络访问授权：展示声明域名，未授权可授权，已授权可撤销
+@Composable
+fun NetworkAccessSection(
+    pluginId: String,
+    pluginName: String,
+    hosts: List<String>,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var authorized by remember(pluginId) {
+        mutableStateOf(SettingsPreferences.getPluginAuthorizedHosts(context, pluginId))
+    }
+    var pendingHost by remember { mutableStateOf<String?>(null) }
+
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = "网络访问",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        hosts.forEach { host ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = host,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                if (host in authorized) {
+                    Text(
+                        text = "已授权",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    TextButton(onClick = {
+                        SettingsPreferences.revokePluginHost(context, pluginId, host)
+                        authorized = authorized - host
+                    }) {
+                        Text("撤销", style = MaterialTheme.typography.bodySmall)
+                    }
+                } else {
+                    TextButton(onClick = { pendingHost = host }) {
+                        Text(
+                            text = "授权",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    pendingHost?.let { host ->
+        AlertDialog(
+            onDismissRequest = { pendingHost = null },
+            title = { Text("授权网络访问") },
+            text = { Text("允许插件「$pluginName」连接 $host 并发送数据？\n\n数据将发送到该域名，请确认信任此插件。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    SettingsPreferences.authorizePluginHost(context, pluginId, host)
+                    authorized = authorized + host
+                    pendingHost = null
+                }) {
+                    Text("允许", color = MaterialTheme.colorScheme.primary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingHost = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+}
+
+// 信任徽标：返回 (标签, 颜色)
+private fun trustBadge(level: TrustLevel): Pair<String, Color> {
+    return when (level) {
+        TrustLevel.TRUSTED -> Pair("官方", Color(0xFF4CAF50))
+        TrustLevel.THIRD_PARTY -> Pair("第三方", Color(0xFFF57C00))
+        TrustLevel.UNKNOWN -> Pair("未知来源", Color(0xFFE53935))
+    }
+}
+
+// 渲染插件图标：优先用插件提供的本地图标（文字或已提取到本地的资源文件），否则用分类默认图标
+@Composable
+fun PluginIconView(
+    icon: PluginIcon?,
+    category: PluginCategory,
+    modifier: Modifier = Modifier,
+    showBackground: Boolean = true
+) {
+    val bgModifier = if (showBackground) {
+        modifier
+            .size(36.dp)
+            .background(
+                MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(10.dp)
+            ).padding(4.dp)
+    } else {
+        modifier
+    }
+    val iconText = icon?.text
+    if (!iconText.isNullOrBlank()) {
+        Box(
+            modifier = bgModifier,
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = iconText,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1
+            )
+        }
+        return
+    }
+
+    val assetPath = icon?.assetName
+    if (assetPath != null) {
+        val bitmap = remember(assetPath) {
+            runCatching { BitmapFactory.decodeFile(assetPath) }.getOrNull()
+        }
+        if (bitmap != null) {
+            val imageBitmap = remember(assetPath) { bitmap.asImageBitmap() }
+            Image(
+                bitmap = imageBitmap,
+                contentDescription = null,
+                modifier = bgModifier,
+                contentScale = ContentScale.Crop
+            )
+            return
+        }
+    }
+
+    Box(
+        modifier = bgModifier,
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = getCategoryIcon(category),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+private fun getCategoryIcon(category: PluginCategory): ImageVector = when (category) {
+    PluginCategory.EMOJI -> Icons.Default.Face
+    PluginCategory.ASR -> Icons.Default.Mic
+    PluginCategory.PREDICTION -> Icons.Default.AutoAwesome
+    PluginCategory.CLIPBOARD_SYNC -> Icons.Default.Sync
+    PluginCategory.UNKNOWN -> Icons.Default.Extension
+}
+
+@Composable
+private fun PluginErrorDialog(
+    pluginId: String,
+    pluginName: String,
+    errors: List<PluginErrorLog.PluginError>,
+    onDismiss: () -> Unit,
+    onClear: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { 
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("$pluginName 错误日志")
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(300.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                errors.forEachIndexed { index, error ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            Text(
+                                text = "#${index + 1} ${error.operation}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Text(
+                                text = error.message,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            val stackTraceText = error.stackTrace
+                            if (stackTraceText != null && stackTraceText.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = stackTraceText.take(200) + "...",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onClear) {
+                Text("清除日志", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        }
+    )
+}

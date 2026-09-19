@@ -1,0 +1,162 @@
+package com.kingzcheung.xime.settings
+
+import android.content.ContentValues
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import androidx.core.content.FileProvider
+import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+
+enum class ExportMode(val label: String) {
+    CONFIG_ONLY("仅配置文件"),
+    FULL_BACKUP("完整备份")
+}
+
+data class ExportResult(
+    val uri: Uri?,
+    val fileName: String,
+    val savedToDownloads: Boolean
+)
+
+object RimeExportManager {
+
+    private const val TAG = "RimeExportManager"
+
+    fun shareSingleFile(context: Context, file: File) {
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = inferMimeType(file)
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            clipData = android.content.ClipData.newRawUri(null, uri)
+        }
+        val chooser = Intent.createChooser(intent, "分享文件")
+        context.startActivity(chooser)
+    }
+
+    fun exportArchive(context: Context, mode: ExportMode): Result<ExportResult> {
+        try {
+            val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+            val fileName = "Xime配置-$dateStr.zip"
+            val rimeDir = File(context.filesDir, "rime")
+            if (!rimeDir.exists()) {
+                return Result.failure(Exception("Rime 目录不存在"))
+            }
+
+            val tempZip = File(context.cacheDir, fileName)
+            ZipOutputStream(FileOutputStream(tempZip)).use { zos ->
+                rimeDir.walkTopDown().forEach { file ->
+                    if (file.isDirectory) return@forEach
+                    val relativePath = file.relativeTo(rimeDir).path.replace('\\', '/')
+                    if (!shouldInclude(relativePath, mode)) return@forEach
+                    zos.putNextEntry(ZipEntry(relativePath))
+                    file.inputStream().use { it.copyTo(zos) }
+                    zos.closeEntry()
+                }
+            }
+
+            if (tempZip.length() == 0L) {
+                tempZip.delete()
+                return Result.failure(Exception("没有可导出的文件"))
+            }
+
+            val savedToDownloads = saveToDownloads(context, tempZip, fileName)
+            tempZip.delete()
+
+            val resultUri = if (savedToDownloads) {
+                resolveDownloadsUri(context, fileName)
+            } else {
+                null
+            }
+
+            return Result.success(ExportResult(resultUri, fileName, savedToDownloads))
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "exportArchive failed", e)
+            return Result.failure(e)
+        }
+    }
+
+    private fun saveToDownloads(context: Context, zipFile: File, fileName: String): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/zip")
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                }
+                val uri = context.contentResolver.insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+                )
+                if (uri == null) return false
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    zipFile.inputStream().use { it.copyTo(output) }
+                }
+                true
+            } else {
+                @Suppress("DEPRECATION")
+                val destDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                if (!destDir.exists()) destDir.mkdirs()
+                val dest = File(destDir, fileName)
+                zipFile.copyTo(dest, overwrite = true)
+                true
+            }
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "saveToDownloads failed", e)
+            false
+        }
+    }
+
+    private fun resolveDownloadsUri(context: Context, fileName: String): Uri? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            val projection = arrayOf(MediaStore.Downloads._ID)
+            val selection = "${MediaStore.Downloads.DISPLAY_NAME} = ?"
+            val selectionArgs = arrayOf(fileName)
+            context.contentResolver.query(collection, projection, selection, selectionArgs, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID))
+                    return Uri.withAppendedPath(collection, id.toString())
+                }
+            }
+        }
+        return null
+    }
+
+    private fun shouldInclude(relativePath: String, mode: ExportMode): Boolean {
+        if (mode == ExportMode.FULL_BACKUP) return true
+        return when {
+            relativePath.startsWith("build/") -> false
+            relativePath.startsWith("opencc/") -> true
+            relativePath.endsWith(".bin") -> false
+            relativePath.endsWith(".gram") -> false
+            relativePath.endsWith(".db") -> false
+            relativePath.endsWith(".db-wal") -> false
+            relativePath.endsWith(".db-shm") -> false
+            else -> true
+        }
+    }
+
+    private fun inferMimeType(file: File): String {
+        return when {
+            file.name.endsWith(".yaml") -> "text/vnd.yaml"
+            file.name.endsWith(".txt") -> "text/plain"
+            file.name.endsWith(".bin") -> "application/octet-stream"
+            file.name.endsWith(".gram") -> "application/octet-stream"
+            file.name.endsWith(".zip") -> "application/zip"
+            else -> "application/octet-stream"
+        }
+    }
+}

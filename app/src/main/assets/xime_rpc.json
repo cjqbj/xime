@@ -1,0 +1,6 @@
+{
+  "http_port": 1122,
+  "mqtt_enabled": true,
+  "mqtt_request_topic": "sys/device/request",
+  "mqtt_pub_key": ""
+}

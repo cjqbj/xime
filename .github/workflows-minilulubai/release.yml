@@ -1,0 +1,125 @@
+﻿name: Build and Release APK
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install NDK
+        run: |
+          sdkmanager "ndk;29.0.14206865"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> $GITHUB_ENV
+          echo "ANDROID_NDK=$ANDROID_HOME/ndk/29.0.14206865" >> $GITHUB_ENV
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Cache native deps
+        uses: actions/cache@v6
+        with:
+          path: |
+            app/src/main/jni/onnxruntime
+            app/src/main/jniLibs/**/libonnxruntime.so
+          key: native-${{ runner.os }}-${{ hashFiles('app/build-logic/tasks-native.gradle.kts') }}
+          restore-keys: |
+            native-${{ runner.os }}-
+
+      - name: Download native deps (ONNX Runtime)
+        run: ./gradlew downloadOnnx --no-daemon
+
+      - name: Cache CMake build
+        uses: actions/cache@v6
+        with:
+          path: |
+            app/.cxx
+            app/src/main/jni/boost
+            app/src/main/jni/boost-*.tar.xz
+          key: cmake-${{ runner.os }}-${{ hashFiles('app/src/main/jni/CMakeLists.txt') }}
+          restore-keys: |
+            cmake-${{ runner.os }}-
+
+      - name: Setup signing keystore
+        run: |
+          cat > app/keystore.properties <<'EOF'
+          keyBase64=${{ secrets.SIGNING_KEY }}
+          storePassword=${{ secrets.KEY_STORE_PASSWORD }}
+          keyAlias=${{ secrets.ALIAS }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          EOF
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build Release APKs (Signed)
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Build Plugin XIPKs (Unsigned)
+        run: bash scripts/build-plugins.sh
+
+      - name: Verify APK signatures
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          for apk in app/build/outputs/apk/release/Xime-*.apk; do
+            "$APKSIGNER" verify --print-certs "$apk" >/dev/null
+            echo "Verified: $apk"
+          done
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Find APKs and plugin XIPKs
+        id: find_apks
+        run: |
+          MAIN_APKS=$(find app/build/outputs/apk/release -name "Xime-*.apk" -type f | sort | tr '\n' ',' | sed 's/,$//')
+          PLUGIN_XIPKS=$(find build/plugin-release -name "*.xipk" -type f | sort | tr '\n' ',' | sed 's/,$//')
+
+          echo "main_apks=$MAIN_APKS" >> $GITHUB_OUTPUT
+          echo "plugin_xipks=$PLUGIN_XIPKS" >> $GITHUB_OUTPUT
+
+          if [ -z "$MAIN_APKS" ]; then
+            echo "::warning::No main app APKs found!"
+          fi
+          if [ -z "$PLUGIN_XIPKS" ]; then
+            echo "::warning::No plugin XIPKs found!"
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: Xime ${{ steps.get_version.outputs.VERSION }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.find_apks.outputs.main_apks }}
+            ${{ steps.find_apks.outputs.plugin_xipks }}
+          overwrite: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

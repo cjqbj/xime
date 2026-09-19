@@ -1,0 +1,14 @@
+app/.cxx/Debug/192c5l3a/arm64-v8a/librime/lib/librime.a filter=lfs diff=lfs merge=lfs -text
+app/.cxx/Debug/6z563863/arm64-v8a/librime/lib/librime.a filter=lfs diff=lfs merge=lfs -text
+app/.cxx/Debug/6z563863/armeabi-v7a/librime/lib/librime.a filter=lfs diff=lfs merge=lfs -text
+app/.cxx/Debug/6z563863/x86/librime/lib/librime.a filter=lfs diff=lfs merge=lfs -text
+app/.cxx/Debug/6z563863/x86_64/librime/lib/librime.a filter=lfs diff=lfs merge=lfs -text
+app/.cxx/RelWithDebInfo/3w1b3d4a/arm64-v8a/librime/lib/librime.a filter=lfs diff=lfs merge=lfs -text
+app/build/intermediates/mapping/release/mergeReleaseComposeMapping/mapping.txt filter=lfs diff=lfs merge=lfs -text
+app/build/intermediates/mapping/release/minifyReleaseWithR8/mapping.txt filter=lfs diff=lfs merge=lfs -text
+app/build/outputs/apk/debug/Xime-2.7.2-arm64-v8a.apk filter=lfs diff=lfs merge=lfs -text
+app/build/outputs/apk/debug/Xime-2.7.2-armeabi-v7a.apk filter=lfs diff=lfs merge=lfs -text
+app/build/outputs/apk/debug/Xime-2.7.2-universal.apk filter=lfs diff=lfs merge=lfs -text
+app/build/outputs/apk/debug/Xime-2.7.2-x86.apk filter=lfs diff=lfs merge=lfs -text
+app/build/outputs/apk/debug/Xime-2.7.2-x86_64.apk filter=lfs diff=lfs merge=lfs -text
+app/build/outputs/mapping/release/mapping.txt filter=lfs diff=lfs merge=lfs -text

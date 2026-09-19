@@ -1,0 +1,13 @@
+/build/*
+!/build/outputs/
+/build/outputs/*
+!/build/outputs/apk/
+/build/outputs/apk/*
+!/build/outputs/apk/debug/
+/build/outputs/apk/debug/*
+!/build/outputs/apk/debug/*arm64-v8a.apk
+!/build/outputs/apk/release/
+/build/outputs/apk/release/*
+!/build/outputs/apk/release/*.apk
+keystore.properties
+/debug
