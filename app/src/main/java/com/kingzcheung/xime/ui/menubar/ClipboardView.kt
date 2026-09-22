@@ -53,9 +53,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -104,6 +107,18 @@ fun ClipboardView(
     var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var showClearConfirm by remember { mutableStateOf(false) }
     var clipboardSearchQuery by remember { mutableStateOf("") }
+    var isSearchVisible by remember { mutableStateOf(false) }
+    val searchFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    LaunchedEffect(isSearchVisible, selectedTab) {
+        if (isSearchVisible && selectedTab == 0) {
+            searchFocusRequester.requestFocus()
+            keyboardController?.show()
+        } else {
+            keyboardController?.hide()
+        }
+    }
 
     fun exitMultiSelect() {
         isMultiSelect = false
@@ -187,9 +202,45 @@ fun ClipboardView(
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f))
+            if (selectedTab == 0 && isSearchVisible) {
+                OutlinedTextField(
+                    value = clipboardSearchQuery,
+                    onValueChange = { clipboardSearchQuery = it },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp)
+                        .focusRequester(searchFocusRequester),
+                    placeholder = { Text("搜索剪贴板历史", maxLines = 1) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = "搜索") },
+                    singleLine = true
+                )
+            }
+
+            Spacer(
+                modifier = if (selectedTab == 0 && isSearchVisible) {
+                    Modifier.width(4.dp)
+                } else {
+                    Modifier.weight(1f)
+                }
+            )
 
             if (selectedTab == 0) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(iconButtonContainer)
+                        .clickable { isSearchVisible = !isSearchVisible },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = if (isSearchVisible) "关闭搜索" else "搜索剪贴板历史",
+                        tint = accentColor,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
                 if (isMultiSelect) {
                     Box(
                         modifier = Modifier
@@ -301,7 +352,6 @@ fun ClipboardView(
                         menuAnchor = MenuAnchor(item, isLeftColumn, tab = 0)
                     },
                     searchQuery = clipboardSearchQuery,
-                    onSearchQueryChange = { clipboardSearchQuery = it },
                     isMultiSelect = isMultiSelect,
                     selectedIds = selectedIds,
                     onToggleSelect = { id ->
@@ -569,7 +619,6 @@ fun ClipboardTabContent(
     onSplitWords: (String, Long) -> Unit,
     onLongPressItem: (ClipboardItem, Boolean) -> Unit,
     searchQuery: String = "",
-    onSearchQueryChange: (String) -> Unit = {},
     isMultiSelect: Boolean = false,
     selectedIds: Set<Long> = emptySet(),
     onToggleSelect: (Long) -> Unit = {},
@@ -582,17 +631,6 @@ fun ClipboardTabContent(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = onSearchQueryChange,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 4.dp),
-            placeholder = { Text("搜索剪贴板历史") },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = "搜索") },
-            singleLine = true
-        )
-
         if (filteredItems.isEmpty()) {
         Box(
             modifier = Modifier.weight(1f).fillMaxWidth(),

@@ -88,6 +88,7 @@ fun PermissionSettingsContent(onBack: () -> Unit) {
     var pendingPermissionQueue by remember { mutableStateOf<List<String>>(emptyList()) }
     var launchTrigger by remember { mutableStateOf(0) }
     var isRequesting by remember { mutableStateOf(false) }
+    var requestAllAfterStorage by remember { mutableStateOf(false) }
 
     LaunchedEffect(refreshKey) {
         permissions.forEach { item ->
@@ -123,10 +124,6 @@ fun PermissionSettingsContent(onBack: () -> Unit) {
         }
     }
 
-    val settingsLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { refreshKey++ }
-
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) refreshKey++
@@ -159,6 +156,16 @@ fun PermissionSettingsContent(onBack: () -> Unit) {
         currentPermission = applicable.first()
         pendingPermissionQueue = applicable.drop(1)
         launchTrigger++
+    }
+
+    val settingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        refreshKey++
+        if (requestAllAfterStorage) {
+            requestAllAfterStorage = false
+            launchPermissionRequest(permissions.map { it.permission })
+        }
     }
 
     fun launchSettings(action: String) {
@@ -224,7 +231,14 @@ fun PermissionSettingsContent(onBack: () -> Unit) {
                     pendingPermissionQueue = emptyList()
                     currentPermission = null
                     isRequesting = false
-                    launchPermissionRequest(permissions.map { it.permission })
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                        !isAllFilesAccessGranted(context)
+                    ) {
+                        requestAllAfterStorage = true
+                        launchSettings(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                    } else {
+                        launchPermissionRequest(permissions.map { it.permission })
+                    }
                 }
             ) {
                 Icon(Icons.TwoTone.Security, contentDescription = null)

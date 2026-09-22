@@ -17,6 +17,7 @@ chaquopy {
         pip {
             install("paho-mqtt==2.1.0")
             install("ecdsa==0.19.1")
+            install("requests")
         }
     }
 }

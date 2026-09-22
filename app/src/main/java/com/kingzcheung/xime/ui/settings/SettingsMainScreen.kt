@@ -135,7 +135,7 @@ fun SettingsMainContent(
         ) {
             item {
                 InlineLogView()
-                PermissionRequestPanel()
+                PermissionRequestPanel(onNavigateToPermissions)
             }
 
             item {
@@ -163,18 +163,6 @@ fun SettingsMainContent(
                                 as InputMethodManager
                             imm.showInputMethodPicker()
                         }
-                    )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = 56.dp),
-                        thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                    )
-                    SettingsItem(
-                        icon = Icons.TwoTone.Security,
-                        title = "权限设置",
-                        subtitle = "查看并申请 Manifest 中声明的权限",
-                        onClick = onNavigateToPermissions,
-                        showArrow = true
                     )
                     HorizontalDivider(
                         modifier = Modifier.padding(start = 56.dp),
@@ -469,7 +457,7 @@ fun SettingsMainContent(
 }
 
 @Composable
-private fun PermissionRequestPanel() {
+private fun PermissionRequestPanel(onNavigateToPermissions: () -> Unit) {
     val context = LocalContext.current
     var backgroundEnabled by remember {
         mutableStateOf(SettingsPreferences.isBackgroundCaptureEnabled(context))
@@ -478,6 +466,13 @@ private fun PermissionRequestPanel() {
         mutableStateOf(SettingsPreferences.isBackgroundCaptureWakeLockEnabled(context))
     }
     Column(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
+        SettingsItem(
+            icon = Icons.TwoTone.Security,
+            title = "权限设置",
+            subtitle = "查看并申请 Manifest 中声明的权限",
+            onClick = onNavigateToPermissions,
+            showArrow = true
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
