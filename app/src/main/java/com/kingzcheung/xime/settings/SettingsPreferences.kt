@@ -16,6 +16,7 @@ object SettingsPreferences {
     private const val KEY_DARK_MODE = "dark_mode"
     private const val KEY_VERBOSE_LOGGING = "verbose_logging"
     private const val KEY_RPC_LOG_TO_DISK = "rpc_log_to_disk"
+    private const val KEY_RPC_LOG_AUTO_WRAP = "rpc_log_auto_wrap"
     private const val KEY_LAUNCHER_ICON_HIDDEN = "launcher_icon_hidden"
     
     private const val KEY_SOUND_ENABLED = "sound_enabled"
@@ -208,6 +209,14 @@ object SettingsPreferences {
 
     fun setRpcLogToDiskEnabled(context: Context, enabled: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_RPC_LOG_TO_DISK, enabled).apply()
+    }
+
+    fun isRpcLogAutoWrapEnabled(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_RPC_LOG_AUTO_WRAP, false)
+    }
+
+    fun setRpcLogAutoWrapEnabled(context: Context, enabled: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_RPC_LOG_AUTO_WRAP, enabled).apply()
     }
 
     fun isLauncherIconHidden(context: Context): Boolean {

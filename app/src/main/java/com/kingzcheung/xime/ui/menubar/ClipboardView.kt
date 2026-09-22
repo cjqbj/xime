@@ -34,12 +34,14 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.twotone.Sync
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -101,6 +103,7 @@ fun ClipboardView(
     var isMultiSelect by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var showClearConfirm by remember { mutableStateOf(false) }
+    var clipboardSearchQuery by remember { mutableStateOf("") }
 
     fun exitMultiSelect() {
         isMultiSelect = false
@@ -297,6 +300,8 @@ fun ClipboardView(
                     onLongPressItem = { item, isLeftColumn ->
                         menuAnchor = MenuAnchor(item, isLeftColumn, tab = 0)
                     },
+                    searchQuery = clipboardSearchQuery,
+                    onSearchQueryChange = { clipboardSearchQuery = it },
                     isMultiSelect = isMultiSelect,
                     selectedIds = selectedIds,
                     onToggleSelect = { id ->
@@ -563,32 +568,53 @@ fun ClipboardTabContent(
     onAddToQuickSend: (Long) -> Unit,
     onSplitWords: (String, Long) -> Unit,
     onLongPressItem: (ClipboardItem, Boolean) -> Unit,
+    searchQuery: String = "",
+    onSearchQueryChange: (String) -> Unit = {},
     isMultiSelect: Boolean = false,
     selectedIds: Set<Long> = emptySet(),
     onToggleSelect: (Long) -> Unit = {},
     onExitMultiSelect: () -> Unit = {},
 ) {
-    if (items.isEmpty()) {
+    val filteredItems = if (searchQuery.isBlank()) {
+        items
+    } else {
+        items.filter { it.text.contains(searchQuery.trim(), ignoreCase = true) }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = onSearchQueryChange,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+            placeholder = { Text("搜索剪贴板历史") },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = "搜索") },
+            singleLine = true
+        )
+
+        if (filteredItems.isEmpty()) {
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.weight(1f).fillMaxWidth(),
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "剪贴板为空",
+                text = if (items.isEmpty()) "剪贴板为空" else "没有匹配的剪贴板记录",
                 color = subTextColor,
                 fontSize = 13.sp
             )
         }
-    } else {
+        } else {
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
             modifier = Modifier
+                .weight(1f)
                 .fillMaxSize()
                 .padding(horizontal = 10.dp, vertical = 2.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            itemsIndexed(items, key = { _, it -> it.id }) { index, item ->
+            itemsIndexed(filteredItems, key = { _, it -> it.id }) { index, item ->
                 GridItemCard(
                     text = item.text,
                     highlighted = isMultiSelect && item.id in selectedIds,
@@ -606,6 +632,7 @@ fun ClipboardTabContent(
                     }
                 )
             }
+        }
         }
     }
 }

@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.twotone.LibraryBooks
@@ -533,6 +534,7 @@ private fun InlineLogView() {
     val context = LocalContext.current
     var logText by remember { mutableStateOf("") }
     val scrollState = rememberScrollState()
+    val horizontalScrollState = rememberScrollState()
     val coroutineScope = rememberCoroutineScope()
     val uiState = RpcUiController.state.collectAsState().value
     val logVisible = uiState["log.visible"]?.toBooleanStrictOrNull() ?: true
@@ -546,6 +548,7 @@ private fun InlineLogView() {
         ?: MaterialTheme.colorScheme.surfaceVariant
     val logToDisk = SettingsPreferences.isRpcLogToDiskEnabled(context)
     val memoryLog = uiState["log.memory"].orEmpty()
+    var autoWrap by remember { mutableStateOf(SettingsPreferences.isRpcLogAutoWrapEnabled(context)) }
 
     if (!logVisible) return
 
@@ -591,16 +594,29 @@ private fun InlineLogView() {
                     .fillMaxWidth()
                     .height(logHeight)
                     .verticalScroll(scrollState)
+                    .then(if (autoWrap) Modifier else Modifier.horizontalScroll(horizontalScrollState))
                     .padding(top = 8.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontFamily = FontFamily.Monospace,
-                style = MaterialTheme.typography.bodySmall
+                style = MaterialTheme.typography.bodySmall,
+                softWrap = autoWrap
             )
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
         ) {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("自动换行", style = MaterialTheme.typography.labelSmall)
+                Switch(
+                    checked = autoWrap,
+                    onCheckedChange = {
+                        autoWrap = it
+                        SettingsPreferences.setRpcLogAutoWrapEnabled(context, it)
+                    }
+                )
+            }
             TextButton(
                 onClick = {
                     coroutineScope.launch {
