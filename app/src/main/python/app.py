@@ -132,8 +132,7 @@ def start(log_path):
         submodule_root = os.path.join(os.path.dirname(__file__), "multi_mqtt")
         if submodule_root not in sys.path:
             sys.path.insert(0, submodule_root)
-        import server_http
-        import server_mqtt
+        import server_http,server_mqtt
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
@@ -155,7 +154,7 @@ def start(log_path):
         reply_topic = str(config.get("mqtt_reply_topic") or server_mqtt.DEFAULT_REPLY_TOPIC)
 
         # 直接把原始值交给 MultiMQTTManager，由它统一走 get_standard_public_pem_bytes
-        mqtt_server= MQTTServer(
+        mqtt_server=server_mqtt.MQTTServer(
             server_public_key_bytes=config.get("mqtt_pub_key"),
             request_topic=request_topic,
             reply_topic=reply_topic,

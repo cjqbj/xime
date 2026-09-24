@@ -158,6 +158,7 @@ with zipfile.ZipFile(src, 'r') as zin:
             zout.writestr(new_info, data)
 PY
 
+rm -f "$APK_PATH"
 APK_PATH="$REPACKED_APK"
 
 # 6) 使用 apk_sign.py 通过 secexp 确定性生成签名密钥并签名
