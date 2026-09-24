@@ -9,7 +9,7 @@ unset APPLICATION_ID VERSION_CODE VERSION_NAME APP_NAME BUILD_ABIS
 
 SECEXP="${SECEXP:-1}"
 APPLICATION_ID="${APPLICATION_ID:-com.qgb.xime}"
-VERSION_CODE="${VERSION_CODE:-20260915}"
+VERSION_CODE="${VERSION_CODE:-20260916}"
 VERSION_NAME="${VERSION_NAME:-${VERSION_CODE}SECEXP=${SECEXP}长度17混合}"
 APP_NAME="${VERSION_CODE: -4}输入法"
 
@@ -174,9 +174,10 @@ fi
 
 # 7) 再复制一份到导出目录，方便直接取用，并保留到全局缓存目录用于真实文件对比
 OUT_APK="$OUT_DIR/Xime-${VERSION_CODE}-${BUILD_ABIS}.apk"
-CACHE_APK="$CACHE_DIR/Xime-${VERSION_CODE}-${BUILD_ABIS}-SECEXP-${SECEXP}.apk"
+#CACHE_APK="$CACHE_DIR/Xime-${VERSION_CODE}-${BUILD_ABIS}-SECEXP-${SECEXP}.apk"
 cp -f "$SIGNED_APK" "$OUT_APK"
 #cp -f "$SIGNED_APK" "$CACHE_APK"
+rm -f "$SIGNED_APK" "$APK_PATH"
 
 APKSIGNER_BIN="$(find "$ANDROID_HOME_DEFAULT/build-tools" -type f -name apksigner -print 2>/dev/null | sort | tail -n 1)"
 AAPT_BIN="$(find "$ANDROID_HOME_DEFAULT/build-tools" -type f -name aapt -print 2>/dev/null | sort | tail -n 1)"
