@@ -140,7 +140,7 @@ class XimeApplication : Application(), ImageLoaderFactory {
                 }
                 Python.getInstance()
                     .getModule("app")
-                    .callAttr("start", logPath)
+                    .callAttr("start", logPath, filesDir.absolutePath)
             } catch (e: Exception) {
                 FileLogger.e(TAG, "Failed to start Python RPC", e)
             }

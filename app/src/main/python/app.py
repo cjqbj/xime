@@ -110,7 +110,7 @@ class MemoryLogProxy:
         pass
 
 
-def start(log_path):
+def start(log_path, files_dir=None):
     global mqtt_server,http_server
     memory_sink = MemoryLogProxy()
     file_sink = None
@@ -126,6 +126,8 @@ def start(log_path):
     sys.stderr = Tee(sys.__stderr__, sinks)
     print("[PYTHON] Chaquopy RPC bootstrap started")
     try:
+        import runtime_pip
+        runtime_pip.configure(files_dir)
         # Import after stdout/stderr redirection so logging.basicConfig in the
         # MQTT and HTTP modules writes into the same log shown by the settings UI.
         import logging

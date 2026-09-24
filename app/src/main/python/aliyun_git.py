@@ -12,7 +12,8 @@ _cfg=getattr(sys,'_qgb_dict',{}).get('aliyun_git',{})
 if not _cfg:
     _cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "!config.json")
     if not os.path.isfile(_cfg_path):
-        raise SystemExit(f"[FATAL] 找不到配置文件: {_cfg_path}")
+        # raise Exception(f"找不到配置文件: {_cfg_path}")
+        raise SystemExit(f"[FATAL] 找不到配置文件: {_cfg_path}")# chaquopy mqtt server 直接停止服务
     with open(_cfg_path, "r", encoding="utf-8") as _f:
         _cfg = json.load(_f)
         if _cfg:
