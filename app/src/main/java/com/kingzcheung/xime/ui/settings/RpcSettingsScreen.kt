@@ -86,7 +86,7 @@ fun RpcSettingsContent(onBack: () -> Unit) {
 
             Text("MQTT RPC", style = MaterialTheme.typography.titleMedium)
             RpcSwitchRow("启用 MQTT RPC", mqttEnabled) { mqttEnabled = it }
-            RpcField("请求 Topic", requestTopic, { requestTopic = it }, "默认 sys/device/request")
+            RpcField("请求 Topic", requestTopic, { requestTopic = it }, "默认监听 sys/device/request")
             RpcField("默认回复 Topic", responseTopic, { responseTopic = it }, "")
             RpcField(
                 "MQTT 公钥",
