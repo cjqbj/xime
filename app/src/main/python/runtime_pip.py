@@ -1,115 +1,83 @@
-import os, sys, io, re, struct, platform, tempfile, threading, importlib, logging, logging.config, warnings, locale, pathlib, functools, traceback
+import os, sys, io, re, tempfile, threading, importlib, warnings, logging, logging.config, traceback, platform, struct, types
 from concurrent.futures import ThreadPoolExecutor
-DEFAULT_INSTALL_DIR = "site-packages"  # 相对应用私有files目录的子目录名,不依赖包名 /data/user/0/com.qgb.xime/files/site-packages
+DEFAULT_INSTALL_DIR = "site-packages"  # Always created below Android filesDir
 
-__all__ = ["configure", "install", "install_missing", "install_async", "CHAQUO_INDEX", "EXTRA_INDEX"]
-CHAQUO_INDEX = "https://chaquo.com/pypi-13.1/"  # Chaquopy官方安卓预编译轮子源
-EXTRA_INDEX = "https://pypi.tuna.tsinghua.edu.cn/simple"  # 清华镜像,加速纯Python包
-AUTO_ANDROID_PLATFORM = True  # 自动追加 --platform android_<api>_<abi>
+__all__ = ["configure", "install", "install_missing", "install_async", "CHAQUO_INDEX", "EXTRA_INDEX", "DEFAULT_INSTALL_DIR", "TARGET_DIR"]
+CHAQUO_INDEX = "https://chaquo.com/pypi-13.1/"  # Chaquopy Android wheel index
+EXTRA_INDEX = "https://pypi.tuna.tsinghua.edu.cn/simple"  # Pure-Python and source fallback index
 
-LOG_TAIL = 8000  # 结果中保留的pip日志尾部字符数
-TARGET_DIR = None
-_LOCK = threading.RLock()
-_ELOCK = threading.Lock()
-_EXEC = None
-_ROUTES = {}
+LOG_TAIL = 12000  # Keep RPC results bounded
+TARGET_DIR = None  # Set by configure
+_LOCK = threading.RLock()  # pip and import-system mutations must be serialized
+_EXEC_LOCK = threading.Lock()
+_EXECUTOR = None
+_OUTPUTS = {}  # Thread id -> pip output buffer
 _ABI = {"aarch64": "arm64_v8a", "arm64": "arm64_v8a", "armv8l": "armeabi_v7a", "armv7l": "armeabi_v7a", "x86_64": "x86_64", "amd64": "x86_64", "i686": "x86", "x86": "x86"}
-_ALIASES = {"pyyaml": "yaml", "beautifulsoup4": "bs4", "pillow": "PIL", "opencv-python": "cv2", "opencv-python-headless": "cv2", "scikit-learn": "sklearn", "python-dateutil": "dateutil", "paho-mqtt": "paho.mqtt", "pycryptodome": "Crypto", "protobuf": "google.protobuf", "pyserial": "serial", "msgpack-python": "msgpack"}
-class _Router(io.TextIOBase):
-    def __init__(self, orig): self._orig = orig
-    def _dst(self):
-        b = _ROUTES.get(threading.get_ident())
-        return b if b is not None else self._orig
-    def write(self, s):
-        d = self._dst()
-        return d.write(s) if d is not None else len(s)
+_ALIASES = {"pydes": "pyDes", "pyyaml": "yaml", "beautifulsoup4": "bs4", "pillow": "PIL", "opencv-python": "cv2", "opencv-python-headless": "cv2", "scikit-learn": "sklearn", "python-dateutil": "dateutil", "paho-mqtt": "paho.mqtt", "pycryptodome": "Crypto", "protobuf": "google.protobuf", "pyserial": "serial", "msgpack-python": "msgpack"}
+class _OutputRouter(io.TextIOBase):
+    def __init__(self, original): self.original = original
+    def _stream(self): return _OUTPUTS.get(threading.get_ident(), self.original)
+    def write(self, text):
+        result = self._stream().write(text)
+        return len(text) if result is None else result
     def flush(self):
-        try: self._dst().flush()
+        try: self._stream().flush()
         except Exception: pass
     def writable(self): return True
     def isatty(self): return False
     def fileno(self): raise io.UnsupportedOperation("fileno")
     @property
-    def encoding(self): return getattr(self._orig, "encoding", None) or "utf-8"
+    def encoding(self): return getattr(self.original, "encoding", None) or "utf-8"
     @property
-    def errors(self): return getattr(self._orig, "errors", None) or "replace"
-    def __getattr__(self, n): return getattr(self._orig, n)
-def _fs(o):
-    for a in ("path", "_path", "root"):
-        v = getattr(o, a, None)
-        if isinstance(v, str): return v
-    try: return os.fspath(o)
-    except TypeError: return str(o)
-def _patch_asset_path():
-    for m in list(sys.modules.values()):
-        d = getattr(m, "__dict__", None)
-        cls = d.get("AssetPath") if isinstance(d, dict) else None
-        if not isinstance(cls, type): continue
-        try:
-            if not hasattr(cls, "parent"): cls.parent = property(lambda s: pathlib.Path(os.path.dirname(_fs(s).rstrip("/")) or "/"))
-            if not hasattr(cls, "name"): cls.name = property(lambda s: os.path.basename(_fs(s).rstrip("/")))
-        except (TypeError, AttributeError): pass
-def _norm_loc(loc):
-    if loc is None or isinstance(loc, pathlib.PurePath): return loc
-    try: return pathlib.Path(_fs(loc))
-    except Exception: return loc
-def _wrap_find_impl(fn):
-    @functools.wraps(fn)
-    def w(*a, **k):
-        for dist, loc in fn(*a, **k): yield dist, _norm_loc(loc)
-    w._rtpip = True
-    return w
-def _safe_iter(fn):
-    @functools.wraps(fn)
-    def w(*a, **k):
-        try: it = iter(fn(*a, **k))
-        except (AttributeError, TypeError, ValueError): return
-        while True:
-            try: x = next(it)
-            except (StopIteration, AttributeError, TypeError, ValueError): return
-            yield x
-    w._rtpip = True
-    return w
-def _patch_pip_env():
-    try: from pip._internal.metadata.importlib import _envs
-    except Exception: return
-    f = getattr(_envs, "_DistributionFinder", None)
-    if f is None: return
-    fi = getattr(f, "_find_impl", None)
-    if fi is not None and not getattr(fi, "_rtpip", False): f._find_impl = _wrap_find_impl(fi)
-    for n in ("find", "find_linked", "find_eggs", "find_legacy_editables"):
-        fn = getattr(f, n, None)
-        if fn is not None and not getattr(fn, "_rtpip", False): setattr(f, n, _safe_iter(fn))
-def _default_dir():  # 优先Chaquopy应用私有files目录,拼DEFAULT_INSTALL_DIR;失败退到HOME
+    def errors(self): return getattr(self.original, "errors", None) or "replace"
+    def __getattr__(self, name): return getattr(self.original, name)
+def _files_dir():
     try:
         from java import jclass
-        base = str(jclass("com.chaquo.python.Python").getPlatform().getApplication().getFilesDir().toString())
-    except Exception:
-        base = os.environ.get("HOME") or os.path.expanduser("~") or os.getcwd()
-    return os.path.join(base, DEFAULT_INSTALL_DIR)
-def _ensure_path(d):
-    if sys.path[:1] != [d]:
-        while d in sys.path: sys.path.remove(d)
-        sys.path.insert(0, d)
-    sys.path_importer_cache.pop(d, None)
+        return str(jclass("com.chaquo.python.Python").getPlatform().getApplication().getFilesDir().toString())
+    except Exception: return os.environ.get("HOME") or os.path.expanduser("~") or os.getcwd()
+def _ensure_path(path):
+    path = os.path.abspath(path)
+    sys.path[:] = [path] + [entry for entry in sys.path if entry != path]
+    sys.path_importer_cache.pop(path, None)  # Remove a cached missing-directory finder
     importlib.invalidate_caches()
 def configure(files_dir=None):
     global TARGET_DIR
     with _LOCK:
-        d = os.path.abspath(files_dir or TARGET_DIR or _default_dir())
-        os.makedirs(d, exist_ok=True)
-        tmp = os.path.join(os.path.dirname(d), "runtime_pip_tmp")
-        os.makedirs(tmp, exist_ok=True)
-        try: ok = os.access(tempfile.gettempdir(), os.W_OK)
-        except Exception: ok = False
-        if not ok: os.environ["TMPDIR"] = tmp; tempfile.tempdir = tmp
-        TARGET_DIR = d
-        _ensure_path(d)
-        return d
-def _mod_name(pkg):
-    n = re.split(r"[\s\[<>=!~;@]", pkg.strip(), 1)[0]
-    k = re.sub(r"[-_.]+", "-", n).lower()
-    return _ALIASES.get(k, k.replace("-", "_"))
+        if files_dir is None and TARGET_DIR: target = TARGET_DIR
+        else:
+            root = os.path.abspath(str(files_dir or _files_dir()))
+            target = root if os.path.basename(os.path.normpath(root)) == DEFAULT_INSTALL_DIR else os.path.join(root, DEFAULT_INSTALL_DIR)
+        os.makedirs(target, exist_ok=True)  # Do this before adding it to sys.path
+        temp_dir = os.path.join(target, ".runtime_pip_tmp")
+        os.makedirs(temp_dir, exist_ok=True)
+        try: writable_temp = os.access(tempfile.gettempdir(), os.W_OK)
+        except Exception: writable_temp = False
+        if not writable_temp: os.environ["TMPDIR"] = temp_dir; tempfile.tempdir = temp_dir  # Android may not provide /tmp
+        TARGET_DIR = target
+        _ensure_path(target)
+        return target
+def _patch_asset_path():
+    def asset_parent(self): return type(self)(os.path.dirname(str(self)))
+    def asset_name(self): return os.path.basename(str(self).rstrip("/"))
+    for module in tuple(sys.modules.values()):
+        namespace = getattr(module, "__dict__", None)
+        if not isinstance(namespace, dict): continue
+        for value in tuple(namespace.values()):
+            if not isinstance(value, type) or value.__name__ != "AssetPath": continue
+            try:
+                if "parent" not in value.__dict__: value.parent = property(asset_parent)
+                if "name" not in value.__dict__: value.name = property(asset_name)
+            except (AttributeError, TypeError): pass  # Immutable lookalikes are harmless
+def _module_name(requirement):
+    name = re.split(r"[\s\[<>=!~;@]", str(requirement).strip(), 1)[0]
+    normalized = re.sub(r"[-_.]+", "-", name).lower()
+    return _ALIASES.get(normalized, normalized.replace("-", "_"))
+def _has_option(args, *names):
+    for arg in args:
+        text = str(arg)
+        if any(text == name or text.startswith(name + "=") for name in names): return True
+    return False
 def _android_api():
     try:
         from java import jclass
@@ -117,110 +85,117 @@ def _android_api():
     except Exception: pass
     try: return int(sys.getandroidapilevel())
     except Exception: return None
-def _platform_args(extra):
-    if not AUTO_ANDROID_PLATFORM or any(str(a).startswith("--platform") for a in extra): return []
-    api, abi = _android_api(), _ABI.get(platform.machine().lower())
+def _android_platform_args(extra_args):
+    if _has_option(extra_args, "--platform"): return []
+    api = _android_api()
+    abi = _ABI.get(platform.machine().lower())
     if not api or not abi: return []
     if struct.calcsize("P") == 4: abi = {"arm64_v8a": "armeabi_v7a", "x86_64": "x86"}.get(abi, abi)
-    out = []
-    for lv in range(16, api + 1): out += ["--platform", "android_%d_%s" % (lv, abi)]
-    return out
-def _run_pip(args):
-    buf = io.StringIO()
+    minimum = 16 if abi in ("armeabi_v7a", "x86") else 21
+    return [item for level in range(minimum, api + 1) for item in ("--platform", "android_%d_%s" % (level, abi))]
+def _run_pip(args, target):
+    output = io.StringIO()
     with _LOCK:
-        _patch_asset_path()
+        _patch_asset_path()  # Chaquopy AssetPath lacks pathlib-like parent/name
         try: from pip._internal.cli.main import main as pip_main
-        except Exception as e: return 1, "import pip failed: %r (Chaquopy需在build.gradle的pip块中 install \"pip\")" % e
-        _patch_pip_env()
-        meta, hooks, spath, pic = sys.meta_path[:], sys.path_hooks[:], sys.path[:], dict(sys.path_importer_cache)
-        wfilters, wshow = warnings.filters[:], warnings.showwarning
+        except Exception as exc: return 1, "import pip failed: %r; add install(\"pip\") to the Chaquopy Gradle pip block\n" % exc
+        meta_path, path_hooks, sys_path = sys.meta_path[:], sys.path_hooks[:], sys.path[:]
+        importer_cache = dict(sys.path_importer_cache)  # Required to remove pip import-guard residue
+        warning_filters, showwarning = warnings.filters[:], warnings.showwarning
         root = logging.getLogger()
-        rh, rl = root.handlers[:], root.level
-        clr = getattr(logging.config, "_clearExistingHandlers", None)
-        try: loc = locale.setlocale(locale.LC_ALL)
-        except Exception: loc = None
-        so, se = sys.stdout, sys.stderr
-        ro, re_ = _Router(so), _Router(se)
-        tid = threading.get_ident()
-        _ROUTES[tid] = buf
-        sys.stdout, sys.stderr = ro, re_
-        if clr is not None: logging.config._clearExistingHandlers = lambda: None
+        root_handlers, root_level = root.handlers[:], root.level
+        clear_handlers = getattr(logging.config, "_clearExistingHandlers", None)
+        stdout, stderr = sys.stdout, sys.stderr
+        routed_stdout, routed_stderr = _OutputRouter(stdout), _OutputRouter(stderr)
+        thread_id = threading.get_ident()
+        _OUTPUTS[thread_id] = output
+        sys.stdout, sys.stderr = routed_stdout, routed_stderr
+        if clear_handlers is not None: logging.config._clearExistingHandlers = lambda: None  # Do not close RPC log handlers
         code = 1
         try: code = pip_main(list(args))
-        except SystemExit as e: code = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
-        except BaseException: buf.write(traceback.format_exc()); code = 1
+        except SystemExit as exc: code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+        except BaseException: output.write(traceback.format_exc()); code = 1
         finally:
-            sys.meta_path[:] = meta
-            sys.path_hooks[:] = hooks
-            sys.path[:] = spath
-            for k in list(sys.path_importer_cache):
-                v = sys.path_importer_cache.get(k)
-                if k not in pic or type(v).__module__.startswith("pip"): sys.path_importer_cache.pop(k, None)
-            if clr is not None: logging.config._clearExistingHandlers = clr
-            for h in root.handlers[:]:
-                if h not in rh:
-                    try: h.close()
+            sys.meta_path[:] = meta_path  # Remove pip >=24 meta-path import guard
+            sys.path_hooks[:] = path_hooks  # Remove pip >=24 path hook import guard
+            sys.path[:] = sys_path
+            sys.path_importer_cache.clear()
+            sys.path_importer_cache.update(importer_cache)
+            sys.path_importer_cache.pop(os.path.abspath(target), None)
+            if clear_handlers is not None: logging.config._clearExistingHandlers = clear_handlers
+            for handler in root.handlers[:]:
+                if handler not in root_handlers:
+                    try: handler.close()
                     except Exception: pass
-            root.handlers[:] = rh
-            root.setLevel(rl)
-            warnings.filters[:] = wfilters
-            warnings.showwarning = wshow
-            fm = getattr(warnings, "_filters_mutated", None) or getattr(warnings, "_filters_mutated_lock_held", None)
-            try: fm and fm()
+            root.handlers[:] = root_handlers
+            root.setLevel(root_level)
+            warnings.filters[:] = warning_filters
+            warnings.showwarning = showwarning
+            try: warnings._filters_mutated()
             except Exception: pass
-            if loc:
-                try: locale.setlocale(locale.LC_ALL, loc)
-                except Exception: pass
-            if sys.stdout is ro: sys.stdout = so
-            if sys.stderr is re_: sys.stderr = se
-            _ROUTES.pop(tid, None)
+            if sys.stdout is routed_stdout: sys.stdout = stdout
+            if sys.stderr is routed_stderr: sys.stderr = stderr
+            _OUTPUTS.pop(thread_id, None)
             importlib.invalidate_caches()
-        try: code = int(code or 0)
-        except (TypeError, ValueError): code = 1
-        return code, buf.getvalue()
-def install(package_name, extra_args=None, module_name=None):
-    t = TARGET_DIR or configure()
-    extra = [str(a) for a in (extra_args or [])]
-    mod = module_name or _mod_name(package_name)
-    args = ["install", package_name, "--target", t, "--upgrade", "--no-compile", "--no-build-isolation", "--disable-pip-version-check", "--no-cache-dir", "--only-binary=:all:", "--no-input", "--no-color", "--progress-bar", "off"] + _platform_args(extra) + extra
-    res = {"ok": False, "package": package_name, "module": mod, "action": None, "version": None, "code": None, "error": None, "log": ""}
-    try: code, log = _run_pip(args)
-    except Exception: code, log = 1, traceback.format_exc()
-    res["code"], res["log"] = code, log[-LOG_TAIL:]
+    try: return int(code or 0), output.getvalue()
+    except (TypeError, ValueError): return 1, output.getvalue() + "\nInvalid pip exit code: %r\n" % (code,)
+def _pip_args(package_name, target, extra_args, native):
+    args = ["install", str(package_name), "--target", target, "--upgrade", "--no-compile", "--no-build-isolation", "--disable-pip-version-check", "--no-cache-dir", "--prefer-binary", "--no-input", "--no-color", "--progress-bar", "off", "--index-url", CHAQUO_INDEX, "--extra-index-url", EXTRA_INDEX] + list(extra_args)
+    if native:
+        if not _has_option(args, "--only-binary"): args.append("--only-binary=:all:")
+        args += _android_platform_args(extra_args)  # --platform requires binary-only resolution
+    return args
+def _import_installed(module_name, target):
+    with _LOCK:
+        _ensure_path(target)
+        loaded = sys.modules.get(module_name)
+        if isinstance(loaded, types.ModuleType): return importlib.reload(loaded), "reloaded"  # Never delete sys.modules entries
+        return importlib.import_module(module_name), "imported"
+def install(package_name, extra_args=None, module_name=None, native=None):
+    target = TARGET_DIR or configure()
+    extra = [str(arg) for arg in (extra_args or [])]
+    module_name = module_name or _module_name(package_name)
+    forced_native = native is True or _has_option(extra, "--platform")
+    modes = [True] if forced_native else ([False] if native is False else [False, True])
+    runs = []
+    for use_native in modes:
+        label = "android-wheel" if use_native else "portable-or-source"
+        code, log = _run_pip(_pip_args(package_name, target, extra, use_native), target)
+        runs.append((label, code, log))
+        if code == 0: break
+    label, code, _ = runs[-1]
+    result = {"ok": False, "package": package_name, "module": module_name, "action": None, "version": None, "code": code, "error": None, "log": "\n".join("[%s]\n%s" % (mode, log) for mode, _, log in runs)[-LOG_TAIL:], "attempts": [{"mode": mode, "code": exit_code} for mode, exit_code, _ in runs]}
     if code != 0:
-        res["error"] = "pip exit code %s" % code
-        return res
+        result["error"] = "pip exit code %s (%s)" % (code, label)
+        return result
     try:
-        with _LOCK:
-            _ensure_path(t)
-            m = sys.modules.get(mod)
-            if m is not None: m, res["action"] = importlib.reload(m), "reloaded"
-            else: m, res["action"] = importlib.import_module(mod), "imported"
-        res["version"], res["ok"] = getattr(m, "__version__", None), True
-    except (Exception, SystemExit) as e: res["error"] = "%s: %s" % (type(e).__name__, e)
-    return res
+        module, action = _import_installed(module_name, target)
+        result.update(ok=True, action=action, version=getattr(module, "__version__", None))
+    except (Exception, SystemExit) as exc: result["error"] = "%s: %s" % (type(exc).__name__, exc)
+    return result
 def _executor():
-    global _EXEC
-    with _ELOCK:
-        if _EXEC is None: _EXEC = ThreadPoolExecutor(max_workers=1, thread_name_prefix="runtime_pip")
-        return _EXEC
-def install_async(package_name, extra_args=None, module_name=None, callback=None):
-    f = _executor().submit(install, package_name, extra_args, module_name)
-    if callback: f.add_done_callback(lambda fu: callback(fu.result()))
-    return f
-def install_missing(packages, extra_args=None, wait=True):
-    if isinstance(packages, str): packages = [packages]
-    items = list(packages.items()) if isinstance(packages, dict) else [(p, None) if isinstance(p, str) else (p[0], p[1] if len(p) > 1 else None) for p in packages]
-    extra = ["-i", CHAQUO_INDEX, "--extra-index-url", EXTRA_INDEX] + [str(a) for a in (extra_args or [])]
+    global _EXECUTOR
+    with _EXEC_LOCK:
+        if _EXECUTOR is None: _EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="runtime_pip")
+        return _EXECUTOR
+def install_async(package_name, extra_args=None, module_name=None, native=None, callback=None):
+    future = _executor().submit(install, package_name, extra_args, module_name, native)
+    if callback: future.add_done_callback(lambda completed: callback(completed.result()))
+    return future
+def _package_items(packages):
+    if isinstance(packages, str): return [(packages, None)]
+    if isinstance(packages, dict): return list(packages.items())
+    return [(item, None) if isinstance(item, str) else (item[0], item[1] if len(item) > 1 else None) for item in packages]
+def install_missing(packages, extra_args=None, wait=True, native=None):
+    items, extra = _package_items(packages), [str(arg) for arg in (extra_args or [])]
     def job():
-        out = {}
-        for pkg, mod in items:
-            mod = mod or _mod_name(pkg)
+        results = {}
+        configure()
+        for package_name, module_name in items:
+            module_name = module_name or _module_name(package_name)
             try:
-                m = importlib.import_module(mod)
-                out[pkg] = {"ok": True, "package": pkg, "module": mod, "action": "present", "version": getattr(m, "__version__", None), "code": 0, "error": None, "log": ""}
-                continue
-            except (Exception, SystemExit): pass
-            out[pkg] = install(pkg, extra, mod)
-        return out
+                module = importlib.import_module(module_name)
+                results[package_name] = {"ok": True, "package": package_name, "module": module_name, "action": "present", "version": getattr(module, "__version__", None), "code": 0, "error": None, "log": "", "attempts": []}
+            except (Exception, SystemExit): results[package_name] = install(package_name, extra, module_name, native)
+        return results
     return job() if wait else _executor().submit(job)
