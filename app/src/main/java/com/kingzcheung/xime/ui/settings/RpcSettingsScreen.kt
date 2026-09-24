@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import com.kingzcheung.xime.settings.RpcSettings
 import com.kingzcheung.xime.settings.RpcSettingsStore
+import com.kingzcheung.xime.settings.SettingsPreferences
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,6 +49,7 @@ fun RpcSettingsContent(onBack: () -> Unit) {
     var responseTopic by remember { mutableStateOf(initial.mqttResponseTopic) }
     var pubKey by remember { mutableStateOf(initial.mqttPubKey) }
     var message by remember { mutableStateOf<String?>(null) }
+    var rpcLogToDisk by remember { mutableStateOf(SettingsPreferences.isRpcLogToDiskEnabled(context)) }
 
     Scaffold(
         topBar = {
@@ -85,12 +87,26 @@ fun RpcSettingsContent(onBack: () -> Unit) {
             Text("MQTT RPC", style = MaterialTheme.typography.titleMedium)
             RpcSwitchRow("启用 MQTT RPC", mqttEnabled) { mqttEnabled = it }
             RpcField("请求 Topic", requestTopic, { requestTopic = it }, "默认 sys/device/request")
-            RpcField("回复 Topic", responseTopic, { responseTopic = it }, "默认 sys/device/response")
+            RpcField("默认回复 Topic", responseTopic, { responseTopic = it }, "")
             RpcField(
                 "MQTT 公钥",
                 pubKey,
                 { pubKey = it },
                 "输入框清空代表不使用公钥验签"
+            )
+
+            SettingsToggleItem(
+                title = "RPC 日志写磁盘",
+                subtitle = "默认关闭，日志保存在内存中并显示在主设置页窗口",
+                checked = rpcLogToDisk,
+                showArrow = false,
+                onCheckedChange = { enabled ->
+                    rpcLogToDisk = enabled
+                    SettingsPreferences.setRpcLogToDiskEnabled(context, enabled)
+                    if (enabled) {
+                        context.filesDir.resolve("rpc.log").parentFile?.mkdirs()
+                    }
+                }
             )
 
             OutlinedButton(
@@ -111,7 +127,7 @@ fun RpcSettingsContent(onBack: () -> Unit) {
                                 mqttPubKey = pubKey
                             )
                         )
-                        if (saved) "已保存，重启应用后生效" else "保存失败，请检查存储权限"
+                        if (saved) "已保存，请点击设置页底部的重启应用使配置生效" else "保存失败，请检查存储权限"
                     }
                 },
                 modifier = Modifier.fillMaxWidth()

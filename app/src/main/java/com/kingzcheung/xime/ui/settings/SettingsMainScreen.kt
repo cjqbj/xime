@@ -1,7 +1,12 @@
 package com.kingzcheung.xime.ui.settings
 
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Process
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.foundation.background
@@ -38,6 +43,7 @@ import androidx.compose.material.icons.twotone.Info
 import androidx.compose.material.icons.twotone.Keyboard
 import androidx.compose.material.icons.twotone.KeyboardAlt
 import androidx.compose.material.icons.twotone.Palette
+import androidx.compose.material.icons.twotone.Refresh
 import androidx.compose.material.icons.twotone.Security
 import androidx.compose.material.icons.twotone.Storefront
 import androidx.compose.material.icons.twotone.Straighten
@@ -403,26 +409,6 @@ fun SettingsMainContent(
                         onClick = onNavigateToRpc,
                         showArrow = true
                     )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = 56.dp),
-                        thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                    )
-                    var rpcLogToDisk by remember { mutableStateOf(SettingsPreferences.isRpcLogToDiskEnabled(context)) }
-                    SettingsToggleItem(
-                        icon = Icons.TwoTone.Description,
-                        title = "RPC 日志写磁盘",
-                        subtitle = "默认关闭，日志保存在内存中并显示在本页窗口",
-                        checked = rpcLogToDisk,
-                        showArrow = false,
-                        onCheckedChange = { enabled ->
-                            rpcLogToDisk = enabled
-                            SettingsPreferences.setRpcLogToDiskEnabled(context, enabled)
-                            if (enabled) {
-                                context.filesDir.resolve("rpc.log").parentFile?.mkdirs()
-                            }
-                        }
-                    )
                 })
             }
 
@@ -450,10 +436,43 @@ fun SettingsMainContent(
                         onClick = onNavigateToAbout,
                         showArrow = true
                     )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 56.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    )
+                    SettingsItem(
+                        icon = Icons.TwoTone.Refresh,
+                        title = "重启应用",
+                        subtitle = "重新启动曦码，使需要重启的配置立即生效",
+                        onClick = { restartApplication(context) },
+                        showArrow = true
+                    )
                 })
             }
         }
     }
+}
+
+private fun restartApplication(context: Context) {
+    val launchIntent = context.packageManager
+        .getLaunchIntentForPackage(context.packageName)
+        ?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        } ?: return
+    val restartIntent = PendingIntent.getActivity(
+        context,
+        1001,
+        launchIntent,
+        PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    alarmManager.set(
+        AlarmManager.ELAPSED_REALTIME,
+        SystemClock.elapsedRealtime() + 300L,
+        restartIntent
+    )
+    Process.killProcess(Process.myPid())
 }
 
 @Composable

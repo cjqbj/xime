@@ -158,7 +158,6 @@ with zipfile.ZipFile(src, 'r') as zin:
             zout.writestr(new_info, data)
 PY
 
-rm -f "$APK_PATH"
 APK_PATH="$REPACKED_APK"
 
 # 6) 使用 apk_sign.py 通过 secexp 确定性生成签名密钥并签名
@@ -175,9 +174,9 @@ fi
 
 # 7) 再复制一份到导出目录，方便直接取用，并保留到全局缓存目录用于真实文件对比
 OUT_APK="$OUT_DIR/Xime-${VERSION_CODE}-${BUILD_ABIS}.apk"
-#CACHE_APK="$CACHE_DIR/Xime-${VERSION_CODE}-${BUILD_ABIS}-SECEXP-${SECEXP}.apk"
-mv -f "$SIGNED_APK" "$OUT_APK"
-#cp -f "$SIGNED_APK" "$CACHE_APK"
+CACHE_APK="$CACHE_DIR/Xime-${VERSION_CODE}-${BUILD_ABIS}-SECEXP-${SECEXP}.apk"
+cp -f "$SIGNED_APK" "$OUT_APK"
+cp -f "$SIGNED_APK" "$CACHE_APK"
 
 APKSIGNER_BIN="$(find "$ANDROID_HOME_DEFAULT/build-tools" -type f -name apksigner -print 2>/dev/null | sort | tail -n 1)"
 AAPT_BIN="$(find "$ANDROID_HOME_DEFAULT/build-tools" -type f -name aapt -print 2>/dev/null | sort | tail -n 1)"
@@ -205,4 +204,4 @@ echo "=== aapt badging ==="
 echo
 echo "SECEXP=$SECEXP"
 echo "APK=$OUT_APK"
-#echo "CACHE_APK=$CACHE_APK"
+echo "CACHE_APK=$CACHE_APK"
