@@ -21,7 +21,7 @@ def load_rpc_config():
         "http_host": "0.0.0.0",
         "http_key": "",
         "mqtt_enabled": False,
-        "mqtt_brokers": "broker.emqx.io:1883",
+        #"mqtt_brokers": "broker.emqx.io:1883",
         "mqtt_request_topic": "sys/device/request",
         "mqtt_reply_topic": "sys/device/response",
         "mqtt_pub_key": "",
@@ -140,7 +140,7 @@ def start(log_path):
             force=True,
         )
         config = load_rpc_config()
-        server =  None
+        mqtt_server =  None
         if config.get('http_enabled', True):
             http_server= server_http.start_rpc_server(
                 port=int(config.get('http_port', 1144)),
@@ -149,7 +149,22 @@ def start(log_path):
                 globals=globals(),
                 locals=locals(),
             )
-        mqtt_server = server_mqtt.start(config,globals=globals()) if config.get("mqtt_enabled", False) else None
+
+        # mqtt_server = server_mqtt.start(config,globals=globals()) if config.get("mqtt_enabled", False) else None
+        request_topic = str(config.get("mqtt_request_topic") or server_mqtt.REQUEST_TOPIC)
+        reply_topic = str(config.get("mqtt_reply_topic") or server_mqtt.DEFAULT_REPLY_TOPIC)
+
+        # 直接把原始值交给 MultiMQTTManager，由它统一走 get_standard_public_pem_bytes
+        mqtt_server= MQTTServer(
+            server_public_key_bytes=config.get("mqtt_pub_key"),
+            request_topic=request_topic,
+            reply_topic=reply_topic,
+            globals=globals(),
+        )
+        mqtt_server.start(block=False)
+
+
+
         print(f"[app.py] {config} loaded, HTTP={http_server} MQTT={mqtt_server} ")
         return True
     except Exception:

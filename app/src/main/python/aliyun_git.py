@@ -8,12 +8,18 @@ _py_repr = repr  # 保存内置 repr，防止后面形参遮蔽
 # ============================================================
 # 配置加载
 # ============================================================
-_cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "!config.json")
-if not os.path.isfile(_cfg_path):
-    raise SystemExit(f"[FATAL] 找不到配置文件: {_cfg_path}")
-with open(_cfg_path, "r", encoding="utf-8") as _f:
-    _cfg = json.load(_f)
-
+_cfg=getattr(sys,'_qgb_dict',{}).get('aliyun_git',{})
+if not _cfg:
+    _cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "!config.json")
+    if not os.path.isfile(_cfg_path):
+        raise SystemExit(f"[FATAL] 找不到配置文件: {_cfg_path}")
+    with open(_cfg_path, "r", encoding="utf-8") as _f:
+        _cfg = json.load(_f)
+        if _cfg:
+            sys._qgb_dict=getattr(sys,'_qgb_dict',{})
+            sys._qgb_dict['aliyun_git']=getattr(sys,'_qgb_dict',{}).get('aliyun_git',{})
+            sys._qgb_dict['aliyun_git'].update(_cfg)
+            
 DEFAULT_TOKEN = _cfg.get("DEFAULT_TOKEN")
 DEFAULT_DOMAIN = _cfg.get("DEFAULT_DOMAIN")
 if not DEFAULT_TOKEN or not DEFAULT_DOMAIN:
@@ -210,7 +216,7 @@ def _base(token=None, domain=None, org_id=None):
 
 
 def _ensure_repo(repo_name, token=None, domain=None, org_id=None,
-                 visibility=DEFAULT_VISIBILITY, timeout=DEFAULT_TIMEOUT):
+                 visibility=DEFAULT_VISIBILITY, timeout=DEFAULT_TIMEOUT,return_id=False):
     """
     确保仓库存在（仅上传路径使用）。
     会话内 _repo_cache 命中后不再产生任何请求。
@@ -223,12 +229,13 @@ def _ensure_repo(repo_name, token=None, domain=None, org_id=None,
             "visibility": visibility, "readMeType": "EMPTY"}
     r = _req("POST", f"{base}/repositories?createParentPath=true",
              headers=headers, json=body, verify=False, timeout=timeout)
-    if r.status_code in (200, 201):
+    if r.status_code in (200, 201,):
         rid = r.json().get("id")
         if rid:
             _repo_cache[key] = rid
             return rid
     if r.status_code == 409:
+        if not return_id:return
         r2 = _req("GET", f"{base}/repositories", headers=headers,
                   params={"search": repo_name, "page": 1, "perPage": 10},
                   verify=False, timeout=timeout)
@@ -535,7 +542,7 @@ def upload_lfs(data, repo_name=DEFAULT_REPO, file_path=None, token=None, domain=
         raise CodeupError("data 必须是 bytes 或文件路径字符串")
 
     # 上传路径需要确保仓库存在（仅首次会打 1~2 个请求，之后走 _repo_cache）
-    _ensure_repo(repo_name, token, domain, org_id)
+    _ensure_repo(repo_name, token, domain, org_id,return_id=False)
 
     print(f"[*] 准备 LFS 上传 [{file_path}]，正在计算 SHA256...")
     oid, size = _get_oid_and_size(data)

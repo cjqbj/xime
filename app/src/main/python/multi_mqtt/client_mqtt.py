@@ -12,14 +12,15 @@ DEFAULT_TIMEOUT = 30
 #   2) CLI 参数    ->  _cli_opts(*alias_xxx)  自动生成 --x / -x / x_x / x-x
 #   3) %magic 命令 ->  cmd in alias_xxx
 alias_code         =('code', 'c')
-alias_request_topic=('request_topic', 'topic', 't')
+alias_request_topic=('request_topic', 'topic', 't','q')
 alias_reply_topic  =('reply_topic', 'reply')
 alias_private_key  =('private_key', 'private', 'key', 'k')
 alias_allow_no_pub =('allow_no_server_pubkey_response','allow_no_pub','allow', 'all', 'a')
 alias_history      =('history', 'history_file', 'his', 'hist')
-alias_status       =('status','s')
+alias_status       =('status','state','s')
 alias_help         =('help','h','?')
 alias_exit         =('exit', 'quit')
+alias_timeout      =('timeout','time','wait','second','sec')
 
 _default_client = None
 _default_client_lock = threading.Lock()
@@ -150,6 +151,7 @@ def rpc(code: str, request_topic: str = REQUEST_TOPIC, timeout: float = DEFAULT_
     request_topic=get_duplicated_kargs(ka,*alias_request_topic,default=request_topic)
     client_private_key_bytes=get_duplicated_kargs(ka,*alias_private_key,default=client_private_key_bytes)
     allow_no_server_pubkey_response=get_duplicated_kargs(ka,*alias_allow_no_pub,default=allow_no_server_pubkey_response)
+    timeout=get_duplicated_kargs(ka,*alias_timeout,default=timeout)
     with _default_client_lock:
         if _default_client is None:
             _default_client = MQTTClientNode(
@@ -238,6 +240,7 @@ def _build_prompt(history_path=None):
         pt_styles = importlib.import_module("prompt_toolkit.styles")
         pt_keys = importlib.import_module("prompt_toolkit.keys")
         pt_history = importlib.import_module("prompt_toolkit.history")
+        pt_filters = importlib.import_module("prompt_toolkit.filters")
         pygments_lexers = importlib.import_module("pygments.lexers")
     except ImportError:
         _state = {"path": _normalize_history_path(history_path)}
@@ -248,10 +251,18 @@ def _build_prompt(history_path=None):
         return _fallback_code_input, False, {"get": _get, "set": _set}
 
     key_bindings = pt_key_binding.KeyBindings()
+    is_searching = pt_filters.is_searching # 搜索状态过滤器，用于让 Enter 在搜索时放行默认绑定
 
-    @key_bindings.add("enter")
+    @key_bindings.add("enter", filter=~is_searching) # 非搜索状态下才走自定义逻辑；搜索时交还默认绑定处理
     def accept_on_empty_line(event):
         buffer = event.current_buffer
+        current_line = buffer.document.current_line
+        if current_line.lstrip().startswith('%'): # magic 命令：直接提交，不换行，光标在中间也提交
+            cleaned = buffer.text.rstrip("\n")
+            if cleaned != buffer.text:
+                buffer.text = cleaned
+            buffer.validate_and_handle()
+            return
         if buffer.document.current_line_before_cursor.strip():
             buffer.insert_text("\n")
         else:
@@ -396,6 +407,11 @@ def _handle_magic(line, state, print_fn):
         else:
             print_fn(f"未知取值: {arg}（应为 on/off）", color=C.RED)
 
+    elif cmd in alias_timeout:
+        try:
+            state['timeout']=float(arg)
+        except Exception as e:
+            print_fn(f'timeout 格式错误 {e}')
     elif cmd in alias_history:
         hist_ctl = state.get("hist_ctl")
         if not arg:
@@ -421,6 +437,7 @@ def _handle_magic(line, state, print_fn):
         print_fn(
             f"request_topic = {state['request_topic']}\n"
             f"reply_topic   = {state['reply_topic']}\n"
+            f"timeout       = {state['timeout']}\n"
             f"key           = {'<set, %d bytes>' % len(kb) if kb else '<none>'}\n"
             f"allow_no_pub  = {state['allow_no_pub']}\n"
             f"history file  = {hist_path if hist_path else '<disabled>'}",
@@ -447,6 +464,7 @@ def run_shell(client, timeout: float = DEFAULT_TIMEOUT, request_topic: str = REQ
         "request_topic": request_topic,
         "default_request_topic": REQUEST_TOPIC,
         "reply_topic": reply_topic,
+        'timeout':timeout,
         "key": client_private_key_bytes,
         "allow_no_pub": allow_no_server_pubkey_response,
         "history_path": hist_ctl["get"](),
@@ -475,7 +493,7 @@ def run_shell(client, timeout: float = DEFAULT_TIMEOUT, request_topic: str = REQ
             continue
         try:
             response = client.request(
-                code, request_topic=state["request_topic"], timeout=timeout,
+                code, request_topic=state["request_topic"], timeout=state['timeout'],
                 client_private_key_bytes=state["key"],
                 allow_no_server_pubkey_response=state["allow_no_pub"],
                 reply_topic=state["reply_topic"],
@@ -540,7 +558,7 @@ if __name__ == "__main__":
         help="客户端私钥文件路径或 PEM 内容；启用后请求会带签名。",
     )
     parser.add_argument(
-        "--timeout", type=float, default=DEFAULT_TIMEOUT,
+        *_cli_opts(*alias_timeout), type=float, default=DEFAULT_TIMEOUT,
         help="命令等待远端响应的超时时间，单位秒。",
     )
     parser.add_argument(
