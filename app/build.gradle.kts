@@ -18,8 +18,8 @@ chaquopy {
             install("pip")
             install("wheel")
             install("setuptools")
-            install("paho-mqtt==2.1.0")
-            install("ecdsa==0.19.1")
+            install("paho-mqtt")
+            install("ecdsa")
             install("requests")
         }
     }

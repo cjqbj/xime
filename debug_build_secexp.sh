@@ -108,6 +108,34 @@ fi
 # ============================================================
 
 
+# ============================================================
+# Native 依赖兜底：librime / snappy 缺失时直接向上游克隆
+# 只检查 CMakeLists.txt 是否存在，缺则 clone --depth 1 --recurse-submodules
+# ============================================================
+ensure_native_dependency() {
+    local repository="$1"
+    local destination="$2"
+    local marker="$destination/CMakeLists.txt"
+    if [[ -f "$marker" ]]; then
+        return
+    fi
+
+    local temporary_directory
+    temporary_directory="$(mktemp -d)"
+    trap 'rm -rf "$temporary_directory"' RETURN
+    echo "缺少 native 依赖，正在下载: $repository"
+    git clone --depth 1 --recurse-submodules "$repository" "$temporary_directory/source"
+    mkdir -p "$destination"
+    cp -a "$temporary_directory/source/." "$destination/"
+    trap - RETURN
+    rm -rf "$temporary_directory"
+}
+
+ensure_native_dependency "https://github.com/rime/librime.git" "app/src/main/jni/librime" || true
+ensure_native_dependency "https://github.com/google/snappy.git" "app/src/main/jni/snappy" || true
+# ============================================================
+
+
 # 2) 清理旧产物，确保输出是这个 secexp 对应的新包
 find "$OUT_DIR" -maxdepth 1 -type f -name 'Xime-*.apk' -delete 2>/dev/null || true
 
