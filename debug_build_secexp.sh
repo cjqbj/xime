@@ -3,6 +3,18 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR"
+WORKSPACE_DIR="$(dirname "$PROJECT_DIR")"
+
+# ============================================================
+# 新增环境隔离：强制让 Gradle 和 Android 工具依赖外层工作区目录
+# 1. 移除引起冲突的 ANDROID_PREFS_ROOT。
+# 2. 显式 mkdir -p 预先创建目录，防止 AGP 的 AndroidDirectoryCreator 崩溃。
+# ============================================================
+export GRADLE_USER_HOME="$WORKSPACE_DIR/.gradle"
+export ANDROID_USER_HOME="$WORKSPACE_DIR/.android"
+
+mkdir -p "$GRADLE_USER_HOME" "$ANDROID_USER_HOME"
+# ============================================================
 
 # 清理残留环境变量，避免旧 shell 变量覆盖脚本中写死的默认值。
 unset APPLICATION_ID VERSION_CODE VERSION_NAME APP_NAME BUILD_ABIS
@@ -54,6 +66,10 @@ export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME_DEFAULT}"
 # ============================================================
 # 子模块同步：只认 .gitmodules 里的 path/url，rsync 权威覆盖
 # ============================================================
+relpath=.gradle/wrapper/dists/gradle-9.5.0-bin/estug5qhtw5xqrldjyqnn9yr5
+# 由于设置了 GRADLE_USER_HOME 为外层目录，在 WORKSPACE_DIR 确保对应的目录结构存在
+mkdir -p "$WORKSPACE_DIR/$relpath"
+
 SUBMODULE_SECTION="[submodule \"app/src/main/python/multi_mqtt\"]"
 SUBMODULE_PATH_VALUE=""
 SUBMODULE_URL_VALUE=""

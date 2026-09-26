@@ -1,5 +1,5 @@
 # multi_mqtt.py
-import importlib.util, os, sys
+import importlib.util,os,subprocess,sys
 def ensure_dependencies():
     packages = {
         "paho": "paho-mqtt",
@@ -9,19 +9,25 @@ def ensure_dependencies():
                if importlib.util.find_spec(module) is None]
     if not missing:
         return
-    from runtime_pip import install
-
-    index_url = "https://pypi.org/simple" if "PYTHONANYWHERE_DOMAIN" in os.environ else "https://pypi.tuna.tsinghua.edu.cn/simple"
-    print(f"[+] 正在使用运行期 pip 安装依赖: {', '.join(missing)}")
+    if 'PYTHONANYWHERE_DOMAIN' in os.environ:
+        index_url='https://pypi.org/simple'
+    else:    
+        index_url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+    print(f"[+] 正在使用清华源安装依赖: {', '.join(missing)}")
+    command = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "-i",
+        index_url,
+        "--trusted-host",
+        "pypi.tuna.tsinghua.edu.cn",
+        *missing,
+    ]
     try:
-        for package in missing:
-            ok, message = install(
-                package,
-                extra_args=["-i", index_url, "--trusted-host", "pypi.tuna.tsinghua.edu.cn"],
-            )
-            if not ok:
-                raise RuntimeError(message)
-    except Exception as error:
+        subprocess.check_call(command)
+    except (OSError, subprocess.CalledProcessError) as error:
         print(f"[!] 依赖安装失败: {error}", file=sys.stderr)
         sys.exit(1)
 ensure_dependencies()
