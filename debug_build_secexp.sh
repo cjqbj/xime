@@ -7,8 +7,7 @@ WORKSPACE_DIR="$(dirname "$PROJECT_DIR")"
 
 # ============================================================
 # 新增环境隔离：强制让 Gradle 和 Android 工具依赖外层工作区目录
-# 1. 移除引起冲突的 ANDROID_PREFS_ROOT。
-# 2. 显式 mkdir -p 预先创建目录，防止 AGP 的 AndroidDirectoryCreator 崩溃。
+# 显式 mkdir -p 预先创建目录，防止 AGP 的 AndroidDirectoryCreator 崩溃。
 # ============================================================
 export GRADLE_USER_HOME="$WORKSPACE_DIR/.gradle"
 export ANDROID_USER_HOME="$WORKSPACE_DIR/.android"
@@ -19,20 +18,23 @@ mkdir -p "$GRADLE_USER_HOME" "$ANDROID_USER_HOME"
 # 清理残留环境变量，避免旧 shell 变量覆盖脚本中写死的默认值。
 unset APPLICATION_ID VERSION_CODE VERSION_NAME APP_NAME BUILD_ABIS
 
+PROJECT_NAME="${PROJECT_DIR##*/}"
+
 SECEXP="${SECEXP:-1}"
-APPLICATION_ID="${APPLICATION_ID:-com.qgb.xime}"
+APPLICATION_ID="${APPLICATION_ID:-com.qgb.${PROJECT_NAME}}"
 VERSION_CODE="${VERSION_CODE:-20260916}"
 VERSION_NAME="${VERSION_NAME:-${VERSION_CODE}SECEXP=${SECEXP}长度17混合}"
 APP_NAME="${VERSION_CODE: -4}输入法"
 
+APK_BASENAME="${APPLICATION_ID}"
+
 BUILD_ABIS="${BUILD_ABIS:-arm64-v8a}"
-OUT_DIR="${OUT_DIR:-$PROJECT_DIR/out/debug-secexp}"
-CACHE_DIR="${CACHE_DIR:-$PROJECT_DIR/../.cache}"
+OUT_DIR="${OUT_DIR:-$PROJECT_DIR/out}"
 
 # 任何一次变更都必须显式传入；禁止把 SECEXP 或构建环境写进版本名/包名。
-export APP_NAME APPLICATION_ID VERSION_CODE VERSION_NAME BUILD_ABIS SECEXP
+export APP_NAME APK_BASENAME APPLICATION_ID VERSION_CODE VERSION_NAME BUILD_ABIS SECEXP
 
-mkdir -p "$OUT_DIR" "$CACHE_DIR"
+mkdir -p "$OUT_DIR"
 
 # 1)定位 Android SDK（兼容 build.sh 的默认路径）
 ANDROID_HOME_DEFAULT=""
@@ -120,40 +122,12 @@ if [[ -d "$source_dir" ]]; then
 else
     echo "警告: 同步源目录不存在: $source_dir，跳过 rsync。" >&2
 fi
-[ ! -f "$PWD/app/src/main/python/aliyun_git.py" ] && wget -O "$PWD/app/src/main/python/aliyun_git.py" https://github.com/QGB/git.bat/raw/refs/heads/master/aliyun_git.py
-# ============================================================
-
-
-# ============================================================
-# Native 依赖兜底：librime / snappy 缺失时直接向上游克隆
-# 只检查 CMakeLists.txt 是否存在，缺则 clone --depth 1 --recurse-submodules
-# ============================================================
-ensure_native_dependency() {
-    local repository="$1"
-    local destination="$2"
-    local marker="$destination/CMakeLists.txt"
-    if [[ -f "$marker" ]]; then
-        return
-    fi
-
-    local temporary_directory
-    temporary_directory="$(mktemp -d)"
-    trap 'rm -rf "$temporary_directory"' RETURN
-    echo "缺少 native 依赖，正在下载: $repository"
-    git clone --depth 1 --recurse-submodules "$repository" "$temporary_directory/source"
-    mkdir -p "$destination"
-    cp -a "$temporary_directory/source/." "$destination/"
-    trap - RETURN
-    rm -rf "$temporary_directory"
-}
-
-ensure_native_dependency "https://github.com/rime/librime.git" "app/src/main/jni/librime" || true
-ensure_native_dependency "https://github.com/google/snappy.git" "app/src/main/jni/snappy" || true
+[ ! -f "$PWD/app/src/main/python/aliyun_git.py" ] && wget -q -O "$PWD/app/src/main/python/aliyun_git.py" https://github.com/QGB/git.bat/raw/refs/heads/master/aliyun_git.py || true
 # ============================================================
 
 
 # 2) 清理旧产物，确保输出是这个 secexp 对应的新包
-find "$OUT_DIR" -maxdepth 1 -type f -name 'Xime-*.apk' -delete 2>/dev/null || true
+find "$OUT_DIR" -maxdepth 1 -type f -name "${APK_BASENAME}-*.apk" -delete 2>/dev/null || true
 
 # 3) 先清理并编译 debug APK，确保同一输入输出一致。
 rm -rf "$PROJECT_DIR/app/build/outputs/apk/debug" "$PROJECT_DIR/out/debug-secexp"
@@ -167,7 +141,7 @@ mkdir -p "$PROJECT_DIR/out/debug-secexp"
   -PbuildAbis="$BUILD_ABIS"
 
 # 4) 找到编译出的 APK
-APK_PATH="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -maxdepth 1 -type f -name "Xime-${VERSION_CODE}-${BUILD_ABIS}.apk" -print -quit)"
+APK_PATH="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -maxdepth 1 -type f -name "${APK_BASENAME}-${VERSION_CODE}-*.apk" -print -quit)"
 if [[ -z "$APK_PATH" ]]; then
     APK_PATH="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -maxdepth 1 -type f -name '*.apk' -print -quit)"
 fi
@@ -217,10 +191,8 @@ if [[ ! -f "$SIGNED_APK" ]]; then
 fi
 
 # 7) 再复制一份到导出目录，方便直接取用，并保留到全局缓存目录用于真实文件对比
-OUT_APK="$OUT_DIR/Xime-${VERSION_CODE}-${BUILD_ABIS}.apk"
-#CACHE_APK="$CACHE_DIR/Xime-${VERSION_CODE}-${BUILD_ABIS}-SECEXP-${SECEXP}.apk"
+OUT_APK="$OUT_DIR/${APK_BASENAME}-${VERSION_CODE}-${BUILD_ABIS}.apk"
 cp -f "$SIGNED_APK" "$OUT_APK"
-#cp -f "$SIGNED_APK" "$CACHE_APK"
 rm -f "$SIGNED_APK" "$APK_PATH"
 
 APKSIGNER_BIN="$(find "$ANDROID_HOME_DEFAULT/build-tools" -type f -name apksigner -print 2>/dev/null | sort | tail -n 1)"
@@ -249,4 +221,3 @@ echo "=== aapt badging ==="
 echo
 echo "SECEXP=$SECEXP"
 echo "APK=$OUT_APK"
-#echo "CACHE_APK=$CACHE_APK"
