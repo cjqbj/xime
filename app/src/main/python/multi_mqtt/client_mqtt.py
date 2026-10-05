@@ -82,6 +82,7 @@ class MQTTClientNode:
     def request(self, payload: str, request_topic: str = REQUEST_TOPIC, timeout: float = DEFAULT_TIMEOUT,
                 client_private_key_bytes=None, allow_no_server_pubkey_response: bool = None,
                 reply_topic: str = REPLY_TOPIC):
+        none={}
         if client_private_key_bytes is None:
             client_private_key_bytes = self.client_private_key_bytes or getattr(self.mqtt_net, "client_private_key_bytes", None)
         if allow_no_server_pubkey_response is None:
@@ -104,15 +105,15 @@ class MQTTClientNode:
                 print(f"[ERROR] 订阅 reply_topic 失败: {exc}")
                 with self.lock:
                     self.pending_requests.pop(req_id, None)
-                return None
+                return none
         try:
             self.mqtt_net.publish_broadcast(request_topic, req_data, client_private_key_bytes=client_private_key_bytes)
         except Exception as exc:
             with self.lock:
                 self.pending_requests.pop(req_id, None)
-            logger.error(f"❌ [请求发送失败] req_id={req_id} error={exc}")
+            logger.error(f"❌ [请求发送失败] {request_topic} req_id={req_id} error={exc}")
             print(f"[ERROR] 请求发送失败: {exc}")
-            return None
+            return none
         is_success = False
         try:
             start_t = time.perf_counter()
@@ -121,7 +122,7 @@ class MQTTClientNode:
                     is_success = True
                     break
         except KeyboardInterrupt:
-            logger.warning(f"⚠️ [请求中断] req_id={req_id}")
+            logger.warning(f"⚠️ [请求中断] {request_topic} req_id={req_id}")
             print("[INFO] 用户中断等待，已停止本次请求。")
             raise
         finally:
@@ -129,8 +130,8 @@ class MQTTClientNode:
                 self.pending_requests.pop(req_id, None)
         if is_success:
             return req_ctx['response']
-        logger.error(f"❌ [请求超时] req_id={req_id}")
-        return None
+        logger.error(f"❌ [请求超时] {request_topic} req_id={req_id}")
+        return none
 
     def stop(self):
         try:
