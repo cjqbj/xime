@@ -1,6 +1,7 @@
 package com.kingzcheung.xime
 
 import android.app.Application
+import android.os.Build
 import android.util.Log
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
@@ -55,7 +56,13 @@ class XimeApplication : Application(), ImageLoaderFactory {
 
         FileLogger.init(this)
         RpcUiController.initialize(this)
-        startPythonRpc()
+        // 进程名守卫：:inference / :asr 侧进程不引导 Python，
+        // 避免侧进程抢 HTTP 端口并以同一 MQTT topic 成为第二个应答者。
+        if (isMainProcess()) {
+            startPythonRpc()
+        } else {
+            FileLogger.i(TAG, "Skip python rpc bootstrap in side process")
+        }
         AppFonts.initialize(this)
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -107,6 +114,20 @@ class XimeApplication : Application(), ImageLoaderFactory {
         preInitializeRimeEngine()
     }
     
+    private fun isMainProcess(): Boolean {
+        val processName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Application.getProcessName()
+        } else {
+            try {
+                File("/proc/self/cmdline").inputStream().bufferedReader().readText()
+                    .trim { it == '\u0000' || it.isWhitespace() }
+            } catch (_: Exception) {
+                ""
+            }
+        }
+        return processName == packageName
+    }
+
     private fun preInitializeRimeEngine() {
         if (RimeEngine.isInitialized()) {
             return

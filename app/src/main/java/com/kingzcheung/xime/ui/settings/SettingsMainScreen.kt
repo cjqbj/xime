@@ -42,6 +42,7 @@ import androidx.compose.material.icons.twotone.GraphicEq
 import androidx.compose.material.icons.twotone.Info
 import androidx.compose.material.icons.twotone.Keyboard
 import androidx.compose.material.icons.twotone.KeyboardAlt
+import androidx.compose.material.icons.twotone.NetworkCheck
 import androidx.compose.material.icons.twotone.Palette
 import androidx.compose.material.icons.twotone.Refresh
 import androidx.compose.material.icons.twotone.Security
@@ -78,6 +79,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.chaquo.python.Python
 import com.kingzcheung.xime.settings.SettingsPreferences
 import com.kingzcheung.xime.service.BackgroundCaptureService
 import com.kingzcheung.xime.util.LauncherIconController
@@ -478,6 +480,7 @@ private fun restartApplication(context: Context) {
 @Composable
 private fun PermissionRequestPanel(onNavigateToPermissions: () -> Unit) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var backgroundEnabled by remember {
         mutableStateOf(SettingsPreferences.isBackgroundCaptureEnabled(context))
     }
@@ -491,6 +494,29 @@ private fun PermissionRequestPanel(onNavigateToPermissions: () -> Unit) {
             subtitle = "查看并申请 Manifest 中声明的权限",
             onClick = onNavigateToPermissions,
             showArrow = true
+        )
+        HorizontalDivider(
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+        )
+        SettingsItem(
+            icon = Icons.TwoTone.NetworkCheck,
+            title = "MQTT 链路统计",
+            subtitle = "在运行日志输出 gms.mqtt_net.stats.get_report() 连接质量报告",
+            onClick = {
+                coroutineScope.launch(Dispatchers.IO) {
+                    try {
+                        Python.getInstance()
+                            .getModule("app")
+                            .callAttr("mqtt_stats_report")
+                    } catch (e: Throwable) {
+                        RpcUiController.appendLog(
+                            "[MQTT] 统计报告执行失败: ${e.message ?: e.javaClass.simpleName}\n"
+                        )
+                    }
+                }
+            },
+            showArrow = false
         )
         Row(
             modifier = Modifier.fillMaxWidth(),

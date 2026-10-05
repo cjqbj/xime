@@ -111,7 +111,7 @@ class MemoryLogProxy:
 
 
 def start(log_path, files_dir=None):
-    global mqtt_server,http_server
+    global mqtt_server,http_server,gms
     memory_sink = MemoryLogProxy()
     file_sink = None
     if log_path:
@@ -162,6 +162,7 @@ def start(log_path, files_dir=None):
             reply_topic=reply_topic,
             globals=globals(),
         )
+        gms = mqtt_server  # 别名：与 multi_mqtt 约定一致，RPC/设置页按钮统一用 gms.mqtt_net.stats.get_report()
         mqtt_server.start(block=False)
 
 
@@ -171,3 +172,13 @@ def start(log_path, files_dir=None):
     except Exception:
         traceback.print_exc()
         return False
+
+
+def mqtt_stats_report():
+    """设置页按钮入口：执行 gms.mqtt_net.stats.get_report() 并把报告打印进运行日志。"""
+    server = globals().get("gms")
+    if server is None:
+        print("[app.py] MQTT 未启动，暂无连接质量统计")
+        return False
+    print(gms.mqtt_net.stats.get_report())
+    return True

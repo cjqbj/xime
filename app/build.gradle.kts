@@ -13,7 +13,9 @@ plugins {
 
 chaquopy {
     defaultConfig {
-        version = "3.14"
+        version = "3.13"
+        // 远端构建容器的 buildPython 必须与目标主次版本一致，显式指向 3.13
+        buildPython = listOf("/usr/bin/python3.13")
         pip {
             install("pip")
             install("wheel")
