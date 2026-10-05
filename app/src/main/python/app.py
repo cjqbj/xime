@@ -165,7 +165,8 @@ def start(log_path, files_dir=None):
         gms = mqtt_server  # 别名：与 multi_mqtt 约定一致，RPC/设置页按钮统一用 gms.mqtt_net.stats.get_report()
         mqtt_server.start(block=False)
 
-
+        import task_manager
+        task_manager.init(files_dir or ".")
 
         print(f"[app.py] {config} loaded, HTTP={http_server} MQTT={mqtt_server} ")
         return True

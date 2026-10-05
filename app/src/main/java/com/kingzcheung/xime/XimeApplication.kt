@@ -47,13 +47,19 @@ class XimeApplication : Application(), ImageLoaderFactory {
     
     companion object {
         private const val TAG = "XimeApplication"
+
+        /** 主进程 Application 单例，供 TaskScheduler 等无 Context 的静态桥使用。 */
+        @JvmStatic
+        lateinit var instance: XimeApplication
+            private set
     }
-    
+
     private val applicationScope = CoroutineScope(Dispatchers.IO)
-    
+
     override fun onCreate() {
         super.onCreate()
 
+        instance = this
         FileLogger.init(this)
         RpcUiController.initialize(this)
         // 进程名守卫：:inference / :asr 侧进程不引导 Python，
