@@ -50,3 +50,23 @@ files in `.skills/compose-expert/references/` before answering.
 ip='192.168.1.106'
 !curl "http://{ip}:1144/from%20com.kingzcheung.xime.util%20import%20RpcUiController%3Br=RpcUiController.setOnlySchema('pinyin_simp')"
 {"ok":true,"id":"pinyin_simp","name":"简体拼音","switched":true,"requires_deploy":false}
+
+## 真机调试
+
+### 锁屏解锁（L 型图案 2589）
+```bash
+adb shell sh /data/local/tmp/unlock_pattern.sh
+```
+脚本在 `scripts/unlock_pattern.sh`，坐标基于 1440×2560 屏。
+
+**成功要点：**
+- 必须唤醒+上滑到图案界面后再执行手势
+- sendevent 每步加 sleep 0.04~0.05 模拟手指速度
+- 必须带 TOUCH_MAJOR=50 否则系统忽略
+- 坐标通过 screencap 像素扫描确认，不要盲猜
+
+### 远程构建同步（GitHub 周转）
+1. 远端 push：`cd /root/build_xime_home/xime && ../git.py push https://cjqbj:<TOKEN>@github.com/cjqbj/xime -u`
+2. 本地 pull：`"C:/Program Files/Zerynth/python/Library/cmd/git.exe" -C C:\test\github\xime pull`
+
+注意：`git.py` 的 `-m/--commit-msg` 参数不能传空字符串，commit 消息由脚本自动生成。
