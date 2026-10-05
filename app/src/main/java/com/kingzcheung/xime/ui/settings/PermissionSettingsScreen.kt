@@ -227,7 +227,9 @@ fun PermissionSettingsContent(onBack: () -> Unit) {
 
             OutlinedButton(
                 onClick = {
-                    // 清掉旧队列再开始新的批量
+                    // 顺序契约：第一步永远先申请"所有文件访问"（未授权时跳系统设置页，
+                    // 从该页返回后由 settingsLauncher 回调接续动态权限队列）；
+                    // 已授权（或 Android 11 以下）才直接进入动态权限组依次弹窗。
                     pendingPermissionQueue = emptyList()
                     currentPermission = null
                     isRequesting = false
@@ -242,7 +244,7 @@ fun PermissionSettingsContent(onBack: () -> Unit) {
                 }
             ) {
                 Icon(Icons.TwoTone.Security, contentDescription = null)
-                Text("申请全部可动态申请权限")
+                Text("申请全部权限")
             }
 
             SettingsSection(title = "动态权限") {

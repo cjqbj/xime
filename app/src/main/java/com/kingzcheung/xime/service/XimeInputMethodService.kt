@@ -824,11 +824,14 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
                 val hasNavBar = navBarDp > 0.dp
 
                 val quickSendFormExtra = if (state.showQuickSendForm) 200 else 0
+                // 剪贴板搜索态：窗口顶部多出搜索结果区，自研键盘仍完整显示在下方
+                val clipboardSearchExtra = if (state.clipboardSearchActive) 200 else 0
+                val panelExtra = quickSendFormExtra + clipboardSearchExtra
 
                 XimeTheme(darkTheme = isDarkTheme, themeId = state.themeId) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         // Sync FrameLayout height with Compose content height
-                        val contentHeight = if (state.showKeyboardResize) state.resizePreviewHeightDp else floatingCardContentHeight + quickSendFormExtra
+                        val contentHeight = if (state.showKeyboardResize) state.resizePreviewHeightDp else floatingCardContentHeight + panelExtra
                         val totalDp = if (state.isCompact || state.isFloatingMode) effectiveScreenH
                             else contentHeight + state.keyboardBottomPaddingDp + activeBottomDp
                         SideEffect {
@@ -843,7 +846,7 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
                             }
                             currentEffectiveKeyboardHeight = if (state.isFloatingMode) keyboardHeight + floatingDragBarHeight + 50 + state.keyboardBottomPaddingDp
                                 else if (state.isCompact) HARDWARE_CANDIDATE_BAR_HEIGHT
-                                else effectiveKeyboardHeight + quickSendFormExtra
+                                else effectiveKeyboardHeight + panelExtra
                         }
                         val kbColors = KeysConfigHelper.getKeyboardColors()
                         val longToColor: (Long) -> androidx.compose.ui.graphics.Color = { if (it == 0L)  { androidx.compose.ui.graphics.Color(0xE61E1E1E) } else if (it > 0xFFFFFF) { androidx.compose.ui.graphics.Color(it) } else { androidx.compose.ui.graphics.Color(0xFF000000 or it) } }
@@ -881,7 +884,7 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(if (state.showKeyboardResize) (state.resizePreviewHeightDp + state.keyboardBottomPaddingDp + activeBottomDp).dp else (floatingCardContentHeight + state.keyboardBottomPaddingDp + quickSendFormExtra + activeBottomDp).dp)
+                                    .height(if (state.showKeyboardResize) (state.resizePreviewHeightDp + state.keyboardBottomPaddingDp + activeBottomDp).dp else (floatingCardContentHeight + state.keyboardBottomPaddingDp + panelExtra + activeBottomDp).dp)
                                     .align(androidx.compose.ui.Alignment.BottomCenter)
                                     .keyboardBackground(rootTheme.keyboardBackground, isDark, keyboardBgColor)
                             )
@@ -890,7 +893,7 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
                             modifier = Modifier
 
                                 .fillMaxWidth()
-                                .height(if (state.showKeyboardResize) (state.resizePreviewHeightDp + state.keyboardBottomPaddingDp).dp else (floatingCardContentHeight + state.keyboardBottomPaddingDp + quickSendFormExtra).dp)
+                                .height(if (state.showKeyboardResize) (state.resizePreviewHeightDp + state.keyboardBottomPaddingDp).dp else (floatingCardContentHeight + state.keyboardBottomPaddingDp + panelExtra).dp)
                                 .align(androidx.compose.ui.Alignment.BottomCenter)
                                 .then(if (state.isFloatingMode) Modifier else Modifier.offset(y = (-activeBottomDp).dp))
                                 .onGloballyPositioned {
@@ -957,6 +960,8 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
                                     quickSendEditingItemId = state.quickSendEditingItemId,
                                     quickSendEditingItemText = state.quickSendEditingItemText,
                                     clipboardSyncEnabled = state.clipboardSyncEnabled,
+                                    clipboardSearchActive = state.clipboardSearchActive,
+                                    clipboardSearchQuery = state.clipboardSearchQuery,
                                 )
                             }
                             val callbacks = rememberImeKeyboardCallbacks(this@XimeInputMethodService, floatingMinY, state, effectiveScreenH)

@@ -224,6 +224,52 @@ fun KeyboardView(
         onCardPositioned = onCardPositioned,
     ) {
     Box(modifier = contentModifier) {
+        // 剪贴板历史搜索态：页面为剪贴板覆盖层且搜索开启时，候选栏下方以固定高度
+        // 展示剪贴板面板（搜索结果），下方继续渲染 QWERTY 键盘，二者同屏可输入。
+        // 定义在 Box 层：Column 内主键盘区与 Column 外的 Overlay 分支都要访问。
+        val clipboardOverlayRoute = (page as? KeyboardPage.Overlay)?.route as? OverlayRoute.Clipboard
+        val showClipboardSearchPanel = clipboardOverlayRoute?.tab == 0 && state.clipboardSearchActive
+        // 切到快捷发送 tab、关闭覆盖层或跳转其他页面时，自动退出搜索态并恢复窗口高度
+        LaunchedEffect(page, state.clipboardSearchActive) {
+            if (state.clipboardSearchActive &&
+                ((page as? KeyboardPage.Overlay)?.route as? OverlayRoute.Clipboard)?.tab != 0) {
+                callbacks.onClipboardSearchToggle?.invoke(false)
+            }
+        }
+        val clipboardPanel: @Composable (Modifier) -> Unit = { panelModifier ->
+            ClipboardView(
+                clipboardItems = state.clipboardItems,
+                quickSendItems = state.quickSendItems,
+                selectedTab = clipboardOverlayRoute?.tab ?: 0,
+                backgroundColor = keyboardBgColor,
+                keyTextColor = keyTextColor,
+                keyBgColor = keyBgColor,
+                viewModel = viewModel,
+                onSelectItem = { text ->
+                    callbacks.onClipboardSelect?.invoke(text)
+                    viewModel.closeOverlay()
+                },
+                onSplitWords = { text, _ -> viewModel.pushOverlay(OverlayRoute.SplitWords(text)) },
+                onBack = { viewModel.closeOverlay() },
+                onClipboardTabChange = { viewModel.pushOverlay(OverlayRoute.Clipboard(it)) },
+                bottomPaddingDp = state.keyboardBottomPaddingDp,
+                modifier = panelModifier,
+                onQuickSendAddClick = {
+                    viewModel.closeOverlay()
+                    callbacks.onShowQuickSendForm?.invoke()
+                },
+                onQuickSendEditItem = { id, text ->
+                    viewModel.closeOverlay()
+                    callbacks.onQuickSendEditItem?.invoke(id, text)
+                },
+                onPullRemote = callbacks.onClipboardPullRemote,
+                pullRemoteAvailable = state.clipboardSyncEnabled,
+                searchActive = state.clipboardSearchActive,
+                searchQuery = state.clipboardSearchQuery,
+                onSearchActiveChange = callbacks.onClipboardSearchToggle,
+                onSearchQueryChange = callbacks.onClipboardSearchQueryChange,
+            )
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -405,9 +451,14 @@ fun KeyboardView(
                 inlineSuggestions = inlineSuggestions,
             )
 
-            val isMainKeyboard = page is KeyboardPage.Main
+            // 搜索态面板固定 200dp 高（与 IME 窗口加高量一致），下方 QWERTY 键盘完整保留
+            if (showClipboardSearchPanel) {
+                clipboardPanel(Modifier.fillMaxWidth().height(200.dp))
+            }
+
+            val isMainKeyboard = page is KeyboardPage.Main || showClipboardSearchPanel
             if (isMainKeyboard) {
-                val mainType = (page as KeyboardPage.Main).type
+                val mainType = (page as? KeyboardPage.Main)?.type ?: MainType.FULL
                 when (mainType) {
                     MainType.FULL -> {
                         val currentOnCursorMove = rememberUpdatedState(callbacks.onCursorMove)
@@ -848,7 +899,7 @@ fun KeyboardView(
             }
         }
 
-        if (page is KeyboardPage.Overlay) {
+        if (page is KeyboardPage.Overlay && !showClipboardSearchPanel) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -901,33 +952,8 @@ fun KeyboardView(
                         onBack = { viewModel.popOverlay() },
                         modifier = Modifier.fillMaxWidth().fillMaxHeight()
                     )
-                    is OverlayRoute.Clipboard -> ClipboardView(
-                        clipboardItems = state.clipboardItems,
-                        quickSendItems = state.quickSendItems,
-                        selectedTab = p.route.tab,
-                        backgroundColor = keyboardBgColor,
-                        keyTextColor = keyTextColor,
-                        keyBgColor = keyBgColor,
-                        viewModel = viewModel,
-                        onSelectItem = { text ->
-                            callbacks.onClipboardSelect?.invoke(text)
-                            viewModel.closeOverlay()
-                        },
-                        onSplitWords = { text, _ -> viewModel.pushOverlay(OverlayRoute.SplitWords(text)) },
-                        onBack = { viewModel.closeOverlay() },
-                        onClipboardTabChange = { viewModel.pushOverlay(OverlayRoute.Clipboard(it)) },
-                        bottomPaddingDp = state.keyboardBottomPaddingDp,
-                        modifier = Modifier.fillMaxWidth().fillMaxHeight(),
-                        onQuickSendAddClick = {
-                            viewModel.closeOverlay()
-                            callbacks.onShowQuickSendForm?.invoke()
-                        },
-                        onQuickSendEditItem = { id, text ->
-                            viewModel.closeOverlay()
-                            callbacks.onQuickSendEditItem?.invoke(id, text)
-                        },
-                        onPullRemote = callbacks.onClipboardPullRemote,
-                        pullRemoteAvailable = state.clipboardSyncEnabled,
+                    is OverlayRoute.Clipboard -> clipboardPanel(
+                        Modifier.fillMaxWidth().fillMaxHeight()
                     )
                     is OverlayRoute.ToolbarCustomize -> ToolbarCustomizeView(
                         toolbarButtons = state.toolbarButtons,

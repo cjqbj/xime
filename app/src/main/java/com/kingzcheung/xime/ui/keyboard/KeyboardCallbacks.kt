@@ -81,6 +81,10 @@ data class KeyboardCallbacks(
      * 由剪贴板面板导航头的「拉取」按钮触发。
      */
     val onClipboardPullRemote: (() -> Unit)? = null,
+    /** 剪贴板历史搜索开关：开启后窗口加高并在面板下方显示自研键盘 */
+    val onClipboardSearchToggle: ((Boolean) -> Unit)? = null,
+    /** 剪贴板历史搜索框文本变化（含自研键盘按键重定向写入） */
+    val onClipboardSearchQueryChange: ((String) -> Unit)? = null,
     val onHideQuickSendForm: (() -> Unit)? = null,
     val onQuickSendEditItem: ((Long, String) -> Unit)? = null,
     val onQuickSendFormFocusChange: ((Boolean) -> Unit)? = null,

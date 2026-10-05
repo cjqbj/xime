@@ -33,7 +33,25 @@ internal fun rememberImeKeyboardCallbacks(
     return remember(floatingMinY) {
         KeyboardCallbacks(
             onKeyPress = { key, isShifted ->
-                service.keyRouter.handleKeyPress(key, isShifted)
+                // 剪贴板历史搜索态：所有物理按键重定向到搜索框，不触碰 RIME/宿主输入框。
+                // 此时键盘窗口下半部仍显示自研 QWERTY，用户可见即可输入搜索词。
+                val s = service.uiState.value
+                if (s.clipboardSearchActive) {
+                    val q = s.clipboardSearchQuery
+                    val next = when (key) {
+                        "delete" -> q.dropLast(1)
+                        "space" -> "$q "
+                        "enter" -> q
+                        else -> if (key.length == 1) {
+                            q + if (isShifted && key.first().isLetter()) key.uppercase() else key
+                        } else q
+                    }
+                    if (next != q) {
+                        service.uiState.value = s.copy(clipboardSearchQuery = next)
+                    }
+                } else {
+                    service.keyRouter.handleKeyPress(key, isShifted)
+                }
             },
             onKeyPressDown = { key ->
                 service.feedbackManager.performKeyPressDownEffect(key, view)
@@ -84,6 +102,16 @@ internal fun rememberImeKeyboardCallbacks(
             onClipboard = {},
             onClipboardSelect = { text -> service.textCommit.selectClipboardItem(text) },
             onClipboardPullRemote = { service.clipboardSyncBridge?.pullOnce() },
+            onClipboardSearchToggle = { active ->
+                service.uiState.value = service.uiState.value.copy(
+                    clipboardSearchActive = active,
+                    // 关闭搜索时清空查询，下次进入重新开始
+                    clipboardSearchQuery = if (active) service.uiState.value.clipboardSearchQuery else ""
+                )
+            },
+            onClipboardSearchQueryChange = { query ->
+                service.uiState.value = service.uiState.value.copy(clipboardSearchQuery = query)
+            },
             onCommitText = { text -> service.textCommit.commitClipboardText(text) },
             onDeleteText = { count -> service.textCommit.deleteClipboardChars(count) },
             onQuickSend = {},

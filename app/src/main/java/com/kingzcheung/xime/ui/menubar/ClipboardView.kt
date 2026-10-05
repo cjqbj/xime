@@ -58,7 +58,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -86,6 +85,12 @@ fun ClipboardView(
     onQuickSendEditItem: ((Long, String) -> Unit)? = null,
     onPullRemote: (() -> Unit)? = null,
     pullRemoteAvailable: Boolean = false,
+    // 搜索态由外部（键盘层/服务层）持有：开启时窗口加高，搜索框下方同屏显示自研键盘，
+    // 按键经 onKeyPress 重定向写入 searchQuery，不再向系统请求弹出键盘。
+    searchActive: Boolean = false,
+    searchQuery: String = "",
+    onSearchActiveChange: ((Boolean) -> Unit)? = null,
+    onSearchQueryChange: ((String) -> Unit)? = null,
 ) {
     // 卡片/格子背景：与菜单项背景一致（keyBgColor，浅色纯白、深色跟随 keyboard.colors）
     val itemBgColor = keyBgColor
@@ -106,17 +111,13 @@ fun ClipboardView(
     var isMultiSelect by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var showClearConfirm by remember { mutableStateOf(false) }
-    var clipboardSearchQuery by remember { mutableStateOf("") }
-    var isSearchVisible by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
-    val keyboardController = LocalSoftwareKeyboardController.current
 
-    LaunchedEffect(isSearchVisible, selectedTab) {
-        if (isSearchVisible && selectedTab == 0) {
+    // 搜索开启时仅获取焦点显示光标；输入法自身窗口内无法再唤起系统键盘，
+    // 实际输入由同屏自研 QWERTY 键盘经按键重定向完成（见 ImeKeyboardCallbacks）。
+    LaunchedEffect(searchActive, selectedTab) {
+        if (searchActive && selectedTab == 0) {
             searchFocusRequester.requestFocus()
-            keyboardController?.show()
-        } else {
-            keyboardController?.hide()
         }
     }
 
@@ -202,10 +203,10 @@ fun ClipboardView(
                 }
             }
 
-            if (selectedTab == 0 && isSearchVisible) {
+            if (selectedTab == 0 && searchActive) {
                 OutlinedTextField(
-                    value = clipboardSearchQuery,
-                    onValueChange = { clipboardSearchQuery = it },
+                    value = searchQuery,
+                    onValueChange = { onSearchQueryChange?.invoke(it) },
                     modifier = Modifier
                         .weight(1f)
                         .height(52.dp)
@@ -217,7 +218,7 @@ fun ClipboardView(
             }
 
             Spacer(
-                modifier = if (selectedTab == 0 && isSearchVisible) {
+                modifier = if (selectedTab == 0 && searchActive) {
                     Modifier.width(4.dp)
                 } else {
                     Modifier.weight(1f)
@@ -230,12 +231,12 @@ fun ClipboardView(
                         .size(28.dp)
                         .clip(CircleShape)
                         .background(iconButtonContainer)
-                        .clickable { isSearchVisible = !isSearchVisible },
+                        .clickable { onSearchActiveChange?.invoke(!searchActive) },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Search,
-                        contentDescription = if (isSearchVisible) "关闭搜索" else "搜索剪贴板历史",
+                        contentDescription = if (searchActive) "关闭搜索" else "搜索剪贴板历史",
                         tint = accentColor,
                         modifier = Modifier.size(18.dp)
                     )
@@ -351,7 +352,7 @@ fun ClipboardView(
                     onLongPressItem = { item, isLeftColumn ->
                         menuAnchor = MenuAnchor(item, isLeftColumn, tab = 0)
                     },
-                    searchQuery = clipboardSearchQuery,
+                    searchQuery = searchQuery,
                     isMultiSelect = isMultiSelect,
                     selectedIds = selectedIds,
                     onToggleSelect = { id ->
