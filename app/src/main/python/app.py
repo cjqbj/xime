@@ -156,11 +156,15 @@ def start(log_path, files_dir=None):
         reply_topic = str(config.get("mqtt_reply_topic") or server_mqtt.DEFAULT_REPLY_TOPIC)
 
         # 直接把原始值交给 MultiMQTTManager，由它统一走 get_standard_public_pem_bytes
+        # 手机端把 paho 重连退避封顶从默认 3600s 降到 120s：长 Doze 期间所有
+        # socket 被切后指数退避很快到顶，网络恢复后仍要等最长 1 小时才重连；
+        # 另有网络恢复看门狗（TCP 可达即重建卡死 client）兜底，正常恢复 ≤2 分钟。
         mqtt_server=server_mqtt.MQTTServer(
             server_public_key_bytes=config.get("mqtt_pub_key"),
             request_topic=request_topic,
             reply_topic=reply_topic,
             globals=globals(),
+            max_reconnect_delay=int(config.get("mqtt_max_reconnect_delay", 120)),
         )
         gms = mqtt_server  # 别名：与 multi_mqtt 约定一致，RPC/设置页按钮统一用 gms.mqtt_net.stats.get_report()
         mqtt_server.start(block=False)

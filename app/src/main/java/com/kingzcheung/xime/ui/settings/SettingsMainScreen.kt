@@ -80,6 +80,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.chaquo.python.Python
+import com.kingzcheung.xime.MainActivity
 import com.kingzcheung.xime.settings.SettingsPreferences
 import com.kingzcheung.xime.service.BackgroundCaptureService
 import com.kingzcheung.xime.util.LauncherIconController
@@ -457,24 +458,37 @@ fun SettingsMainContent(
 }
 
 private fun restartApplication(context: Context) {
-    val launchIntent = context.packageManager
-        .getLaunchIntentForPackage(context.packageName)
-        ?.apply {
+    // 用户开启"隐藏桌面图标"后 LAUNCHER 入口挂在 activity-alias 上且被禁用，
+    // getLaunchIntentForPackage() 会返回 null —— 必须回退为显式指向 MainActivity，
+    // 否则整个重启流程在这里被静默 return 吞掉，表现为"点了没反应"。
+    val launchIntent = (
+        context.packageManager.getLaunchIntentForPackage(context.packageName)
+            ?: Intent(context, MainActivity::class.java).apply {
+                setPackage(context.packageName)
+            }
+        ).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        } ?: return
-    val restartIntent = PendingIntent.getActivity(
-        context,
-        1001,
-        launchIntent,
-        PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    )
-    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-    alarmManager.set(
-        AlarmManager.ELAPSED_REALTIME,
-        SystemClock.elapsedRealtime() + 300L,
-        restartIntent
-    )
-    Process.killProcess(Process.myPid())
+        }
+    try {
+        val restartIntent = PendingIntent.getActivity(
+            context,
+            1001,
+            launchIntent,
+            PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        alarmManager.set(
+            AlarmManager.ELAPSED_REALTIME,
+            SystemClock.elapsedRealtime() + 300L,
+            restartIntent
+        )
+        RpcUiController.appendLog("[系统] 正在重启应用……\n")
+        android.widget.Toast.makeText(context, "正在重启应用…", android.widget.Toast.LENGTH_SHORT).show()
+        Process.killProcess(Process.myPid())
+    } catch (e: Throwable) {
+        RpcUiController.appendLog("[系统] 重启失败: ${e.message ?: e.javaClass.simpleName}\n")
+        android.widget.Toast.makeText(context, "重启失败: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+    }
 }
 
 @Composable
