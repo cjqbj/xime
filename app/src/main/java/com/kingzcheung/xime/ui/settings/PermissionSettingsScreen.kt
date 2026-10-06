@@ -166,8 +166,9 @@ fun PermissionSettingsContent(onBack: () -> Unit) {
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshKey++
-        // 从系统授权页返回：若「所有文件访问」已授予，立即把外置设置/rime 对齐回活数据，
-        // 覆盖「重装后先开 App、后补授权」场景（剪贴板由表观察自动行级恢复）。
+        // 从系统授权页返回：若「所有文件访问」已授予，StorageRecovery 会复制外置设置并
+        // 重启进程，由启动期路径完成设置/rime/剪贴板全部恢复（覆盖重装后先开 App、
+        // 后补授权场景）。
         // 部分 ROM 在「离开」授权页时才生效授权，回调瞬间可能还是 false，做几次延迟轮询；
         // StorageRecovery 内部有每进程去重，多次调用安全。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
