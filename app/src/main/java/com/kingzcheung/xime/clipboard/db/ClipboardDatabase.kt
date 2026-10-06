@@ -36,15 +36,19 @@ abstract class ClipboardDatabase : RoomDatabase() {
 
         fun getInstance(context: Context): ClipboardDatabase {
             return instance ?: synchronized(this) {
-                instance ?: Room.databaseBuilder<ClipboardDatabase>(
-                    context.applicationContext,
-                    DATABASE_NAME
-                )
-                    .setDriver(AndroidSQLiteDriver())
-                    .setQueryCoroutineContext(Dispatchers.IO)
-                    .addMigrations(MIGRATION_1_2)
-                    .build()
-                    .also { instance = it }
+                instance ?: run {
+                    // 建库前先按「外置为准、缺失留种」恢复外置备份（卸载重装场景）
+                    com.kingzcheung.xime.storage.ClipboardBackup.restoreIfNeeded(context)
+                    Room.databaseBuilder<ClipboardDatabase>(
+                        context.applicationContext,
+                        DATABASE_NAME
+                    )
+                        .setDriver(AndroidSQLiteDriver())
+                        .setQueryCoroutineContext(Dispatchers.IO)
+                        .addMigrations(MIGRATION_1_2)
+                        .build()
+                        .also { instance = it }
+                }
             }
         }
 

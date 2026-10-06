@@ -40,7 +40,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -60,6 +63,7 @@ private data class RuntimePermission(
 fun PermissionSettingsContent(onBack: () -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val recoveryScope = rememberCoroutineScope()
 
     var refreshKey by remember { mutableStateOf(0) }
 
@@ -162,6 +166,23 @@ fun PermissionSettingsContent(onBack: () -> Unit) {
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshKey++
+        // 从系统授权页返回：若「所有文件访问」已授予，立即把外置设置/rime 对齐回活数据，
+        // 覆盖「重装后先开 App、后补授权」场景（剪贴板由表观察自动行级恢复）。
+        // 部分 ROM 在「离开」授权页时才生效授权，回调瞬间可能还是 false，做几次延迟轮询；
+        // StorageRecovery 内部有每进程去重，多次调用安全。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            recoveryScope.launch {
+                val delaysMs = longArrayOf(0L, 400L, 1200L, 2500L)
+                for (d in delaysMs) {
+                    delay(d)
+                    if (isAllFilesAccessGranted(context)) {
+                        com.kingzcheung.xime.storage.StorageRecovery
+                            .onAllFilesAccessGranted(context)
+                        break
+                    }
+                }
+            }
+        }
         if (requestAllAfterStorage) {
             requestAllAfterStorage = false
             launchPermissionRequest(permissions.map { it.permission })

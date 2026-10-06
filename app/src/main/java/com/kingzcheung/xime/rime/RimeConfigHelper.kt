@@ -46,9 +46,11 @@ object RimeConfigHelper {
         SchemaManager.applyEnabledSchemasToDefaultYaml(context)
         // 为所有启用方案打个人词库补丁
         PersonalDictManager.ensureSchemaPacks(context)
+        // 用户数据外置镜像对齐（外置为准）：assets/补丁都落地后再恢复，保证用户配置最终生效
+        com.kingzcheung.xime.storage.RimeBackup.reconcile(context, rimeDir)
         // 不再在初始化阶段删 build：build 是否重建统一由 ensureDeployment()
         // 按增量优先策略决定，避免配置变化即全量重编译（60MB 词库持锁 30s+）。
-        
+
         return Pair(rimeDir.absolutePath, rimeDir.absolutePath)
     }
 
@@ -94,6 +96,8 @@ object RimeConfigHelper {
             if (deployed) {
                 storeDeploymentHash(context)
                 SettingsPreferences.setDeploymentDone(context, true)
+                // 部署后用户配置/词库已变化，镜像到外置
+                com.kingzcheung.xime.storage.RimeBackup.mirrorOut(context)
                 return true
             }
             return false
@@ -113,6 +117,8 @@ object RimeConfigHelper {
         // F1: 同步初始化路径也写回 default.yaml 的 schema_list
         SchemaManager.applyEnabledSchemasToDefaultYaml(context)
         runBlocking { PersonalDictManager.ensureSchemaPacks(context) }
+        // 用户数据外置镜像对齐（外置为准）
+        com.kingzcheung.xime.storage.RimeBackup.reconcile(context, rimeDir)
         // build 重建统一由 ensureDeployment() 增量优先决策，此处不删 build
         
         return Pair(rimeDir.absolutePath, rimeDir.absolutePath)

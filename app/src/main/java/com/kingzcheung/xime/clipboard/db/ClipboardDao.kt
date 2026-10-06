@@ -103,6 +103,9 @@ interface ClipboardDao {
         }
     }
 
+    @Query("SELECT COUNT(*) FROM clipboard_entries")
+    suspend fun countAll(): Int
+
     @Query("SELECT COUNT(*) FROM clipboard_entries WHERE isQuickSend = 1")
     suspend fun countQuickSend(): Int
 

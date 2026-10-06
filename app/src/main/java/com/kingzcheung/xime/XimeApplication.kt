@@ -65,6 +65,8 @@ class XimeApplication : Application(), ImageLoaderFactory {
         // 进程名守卫：:inference / :asr 侧进程不引导 Python，
         // 避免侧进程抢 HTTP 端口并以同一 MQTT topic 成为第二个应答者。
         if (isMainProcess()) {
+            // 最早期：外置设置镜像恢复（外置为准），必须在任何业务读取 kime_settings 之前
+            com.kingzcheung.xime.storage.SettingsMirror.reconcile(this)
             startPythonRpc()
         } else {
             FileLogger.i(TAG, "Skip python rpc bootstrap in side process")

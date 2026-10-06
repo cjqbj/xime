@@ -116,6 +116,9 @@ class ClipboardManager private constructor(private val context: Context) {
             dao.observeAll().collect { entries ->
                 _clipboardItems.value = entries.map { it.toClipboardItem() }
                 updateRecentItems()
+                // 非空→去抖备份到外置；空库→尝试从外置行级恢复（卸载重装后授权前建过空库的场景）
+                com.kingzcheung.xime.storage.ClipboardBackup
+                    .onLiveSnapshot(context, dao, entries.isEmpty())
             }
         }
         scope.launch {
