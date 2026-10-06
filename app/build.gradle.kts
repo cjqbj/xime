@@ -196,6 +196,9 @@ android {
 
     // 测试 classpath 包含 main assets，使 T9Decoder() 无参构造可加载 pinyin_lm.bin
     sourceSets {
+        getByName("debug") {
+            res.srcDir("$buildDir/generated/debugAppIcon/res")
+        }
         getByName("test") {
             resources.srcDirs("src/main/assets")
         }

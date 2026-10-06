@@ -5,31 +5,94 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR"
 WORKSPACE_DIR="$(dirname "$PROJECT_DIR")"
 
-# ============================================================
-# 新增环境隔离：强制让 Gradle 和 Android 工具依赖外层工作区目录
-# 显式 mkdir -p 预先创建目录，防止 AGP 的 AndroidDirectoryCreator 崩溃。
-# ============================================================
-export GRADLE_USER_HOME="$WORKSPACE_DIR/.gradle"
-export ANDROID_USER_HOME="$WORKSPACE_DIR/.android"
+if (($#)); then
+    echo "错误: 本脚本不使用命令行参数，请修改文件开头的“构建参数”配置区。" >&2
+    exit 2
+fi
 
-mkdir -p "$GRADLE_USER_HOME" "$ANDROID_USER_HOME"
 # ============================================================
-
-# 清理残留环境变量，避免旧 shell 变量覆盖脚本中写死的默认值。
+# 构建参数：需要调整时只修改本段。
+# APP_ICON_PATH 默认使用项目当前的前景图标；可改为 PNG、WebP 或矢量 XML 文件。
+# ============================================================
 unset APPLICATION_ID VERSION_CODE VERSION_NAME APP_NAME BUILD_ABIS
 
 PROJECT_NAME="${PROJECT_DIR##*/}"
 
 SECEXP="${SECEXP:-1}"
 APPLICATION_ID="${APPLICATION_ID:-com.qgb.${PROJECT_NAME}}"
-VERSION_CODE="${VERSION_CODE:-20260916}"
+VERSION_CODE="${VERSION_CODE:-20260917}"
 VERSION_NAME="${VERSION_NAME:-${VERSION_CODE}SECEXP=${SECEXP}长度17混合}"
 APP_NAME="${VERSION_CODE: -4}输入法"
-
 APK_BASENAME="${APPLICATION_ID}"
-
 BUILD_ABIS="${BUILD_ABIS:-arm64-v8a}"
 OUT_DIR="${OUT_DIR:-$PROJECT_DIR/out}"
+APP_ICON_PATH="${APP_ICON_PATH:-$PROJECT_DIR/app/src/main/res/drawable/ic_launcher_foreground.xml}"
+
+GRADLE_USER_HOME="$WORKSPACE_DIR/.gradle"
+ANDROID_USER_HOME="$WORKSPACE_DIR/.android"
+# ============================================================
+
+ICON_RESOURCE_ROOT="$PROJECT_DIR/app/build/generated/debugAppIcon/res"
+
+cleanup_debug_icon() {
+    if [[ -d "$ICON_RESOURCE_ROOT" ]]; then
+        rm -rf -- "$ICON_RESOURCE_ROOT"
+    fi
+}
+
+trap cleanup_debug_icon EXIT
+cleanup_debug_icon
+
+if [[ ! -f "$APP_ICON_PATH" || ! -r "$APP_ICON_PATH" || ! -s "$APP_ICON_PATH" ]]; then
+    echo "错误: 图标文件不存在、不可读或为空：$APP_ICON_PATH" >&2
+    exit 1
+fi
+
+APP_ICON_PATH="$(realpath -- "$APP_ICON_PATH")"
+case "${APP_ICON_PATH,,}" in
+    *.png) ICON_EXTENSION="png"; ICON_RESOURCE_DIR="$ICON_RESOURCE_ROOT/drawable-nodpi" ;;
+    *.webp) ICON_EXTENSION="webp"; ICON_RESOURCE_DIR="$ICON_RESOURCE_ROOT/drawable-nodpi" ;;
+    *.xml) ICON_EXTENSION="xml"; ICON_RESOURCE_DIR="$ICON_RESOURCE_ROOT/drawable" ;;
+    *)
+        echo "错误: 图标只支持 PNG、WebP 或 Android 矢量 XML 格式：$APP_ICON_PATH" >&2
+        exit 1
+        ;;
+esac
+
+python3 - "$APP_ICON_PATH" "$ICON_EXTENSION" <<'PY'
+import pathlib
+import sys
+import xml.etree.ElementTree as ET
+
+image_path = pathlib.Path(sys.argv[1])
+image_format = sys.argv[2]
+with image_path.open("rb") as image_file:
+    header = image_file.read(12)
+
+if image_format == "png":
+    valid = header.startswith(b"\x89PNG\r\n\x1a\n")
+elif image_format == "webp":
+    valid = header[:4] == b"RIFF" and header[8:12] == b"WEBP"
+else:
+    valid = ET.parse(image_path).getroot().tag == "vector"
+
+if not valid:
+    raise SystemExit(f"错误: 文件格式无效或与扩展名不匹配：{image_path}")
+PY
+
+ICON_RESOURCE_FILE="$ICON_RESOURCE_DIR/ic_launcher_foreground.$ICON_EXTENSION"
+mkdir -p "$ICON_RESOURCE_DIR"
+cp -- "$APP_ICON_PATH" "$ICON_RESOURCE_FILE"
+printf '应用图标文件：%s\n' "$APP_ICON_PATH"
+
+# ============================================================
+# 新增环境隔离：强制让 Gradle 和 Android 工具依赖外层工作区目录
+# 显式 mkdir -p 预先创建目录，防止 AGP 的 AndroidDirectoryCreator 崩溃。
+# ============================================================
+export GRADLE_USER_HOME ANDROID_USER_HOME
+
+mkdir -p "$GRADLE_USER_HOME" "$ANDROID_USER_HOME"
+# ============================================================
 
 # 任何一次变更都必须显式传入；禁止把 SECEXP 或构建环境写进版本名/包名。
 export APP_NAME APK_BASENAME APPLICATION_ID VERSION_CODE VERSION_NAME BUILD_ABIS SECEXP
@@ -154,7 +217,7 @@ find "$OUT_DIR" -maxdepth 1 -type f -name "${APK_BASENAME}-*.apk" -delete 2>/dev
 
 # 3) 先清理并编译 debug APK，确保同一输入输出一致。
 rm -rf "$PROJECT_DIR/app/build/outputs/apk/debug" "$PROJECT_DIR/out/debug-secexp"
-mkdir -p "$PROJECT_DIR/out/debug-secexp"
+#mkdir -p "$PROJECT_DIR/out/debug-secexp"
 ./gradlew --no-daemon assembleDebug \
   --quiet \
   -PappName="$APP_NAME" \
@@ -162,6 +225,8 @@ mkdir -p "$PROJECT_DIR/out/debug-secexp"
   -PversionCode="$VERSION_CODE" \
   -PversionName="$VERSION_NAME" \
   -PbuildAbis="$BUILD_ABIS"
+
+cleanup_debug_icon
 
 # 4) 找到编译出的 APK
 APK_PATH="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -maxdepth 1 -type f -name "${APK_BASENAME}-${VERSION_CODE}-*.apk" -print -quit)"
