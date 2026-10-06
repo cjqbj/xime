@@ -33,21 +33,50 @@ internal fun rememberImeKeyboardCallbacks(
     return remember(floatingMinY) {
         KeyboardCallbacks(
             onKeyPress = { key, isShifted ->
-                // 剪贴板历史搜索态：所有物理按键重定向到搜索框，不触碰 RIME/宿主输入框。
-                // 此时键盘窗口下半部仍显示自研 QWERTY，用户可见即可输入搜索词。
+                // 剪贴板历史搜索态：按键仍走 RIME 引擎（候选栏正常显示拼音候选，
+                // 中文可组词），引擎上屏经 service.commitText 重定向写入搜索框。
                 val s = service.uiState.value
                 if (s.clipboardSearchActive) {
-                    val q = s.clipboardSearchQuery
-                    val next = when (key) {
-                        "delete" -> q.dropLast(1)
-                        "space" -> "$q "
-                        "enter" -> q
-                        else -> if (key.length == 1) {
-                            q + if (isShifted && key.first().isLetter()) key.uppercase() else key
-                        } else q
-                    }
-                    if (next != q) {
-                        service.uiState.value = s.copy(clipboardSearchQuery = next)
+                    val cs = service.candidateState.value
+                    val composing = cs.isComposing ||
+                        cs.inputText.isNotEmpty() ||
+                        cs.preeditText.isNotEmpty() ||
+                        cs.pendingEnglishText.isNotEmpty()
+                    when {
+                        // 退格：有 RIME 编码先删编码，无编码才删搜索框字符，绝不回删宿主
+                        key == "delete" -> {
+                            if (composing) {
+                                service.keyRouter.handleKeyPress("delete", false)
+                            } else if (s.clipboardSearchQuery.isNotEmpty()) {
+                                service.uiState.value =
+                                    s.copy(clipboardSearchQuery = s.clipboardSearchQuery.dropLast(1))
+                            }
+                        }
+                        // 回车：编码中把原始编码提交进搜索框；空闲时忽略，不触发宿主动作键
+                        key == "enter" -> {
+                            if (composing) service.keyRouter.handleKeyPress("enter", false)
+                        }
+                        // 上滑清空：清搜索框 + RIME 编码；下滑撤回：搜索态禁用
+                        // （普通路径在空闲态会删除宿主输入框内容，必须拦截）
+                        key == "clear_all" -> {
+                            if (s.clipboardSearchQuery.isNotEmpty()) {
+                                service.uiState.value = s.copy(clipboardSearchQuery = "")
+                            }
+                            if (composing) service.keyRouter.handleKeyPress("clear_composition", false)
+                        }
+                        key == "undo_clear" -> {
+                            // no-op
+                        }
+                        // 英文模式字母：直接追加到搜索框（RIME 的 pendingEnglish 路径会
+                        // setComposingText 到宿主输入框，搜索态必须避开）
+                        key.length == 1 && key[0].isLetter() && s.isAsciiMode -> {
+                            val ch = if (isShifted) key.uppercase() else key.lowercase()
+                            service.uiState.value =
+                                s.copy(clipboardSearchQuery = s.clipboardSearchQuery + ch)
+                        }
+                        // 其余按键（中文模式字母、标点、空格、中英切换、清编码等）照常进 RIME，
+                        // 上屏文本由 commitText 重定向，空格空闲态也会经 commitText(" ") 入搜索框
+                        else -> service.keyRouter.handleKeyPress(key, isShifted)
                     }
                 } else {
                     service.keyRouter.handleKeyPress(key, isShifted)
@@ -108,6 +137,20 @@ internal fun rememberImeKeyboardCallbacks(
                     // 关闭搜索时清空查询，下次进入重新开始
                     clipboardSearchQuery = if (active) service.uiState.value.clipboardSearchQuery else ""
                 )
+                // 进入/退出搜索都清空 RIME 组合与候选：
+                // 进入时丢弃宿主里未提交的编码，退出时防止搜索期拼音泄漏到宿主
+                service.keyRouter.postRimeJob {
+                    service.rimeEngine.clearComposition()
+                    service.calculatorEngine.clear()
+                    withContext(Dispatchers.Main) {
+                        if (SettingsPreferences.getInputTextLocation(service) ==
+                            SettingsPreferences.INPUT_TEXT_INPUT_BOX
+                        ) {
+                            service.endComposingInputBox()
+                        }
+                        service.candidateState.value = CandidateState()
+                    }
+                }
             },
             onClipboardSearchQueryChange = { query ->
                 service.uiState.value = service.uiState.value.copy(clipboardSearchQuery = query)

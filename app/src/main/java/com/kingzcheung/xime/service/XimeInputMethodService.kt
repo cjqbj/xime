@@ -824,8 +824,12 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
                 val hasNavBar = navBarDp > 0.dp
 
                 val quickSendFormExtra = if (state.showQuickSendForm) 200 else 0
-                // 剪贴板搜索态：窗口顶部多出搜索结果区，自研键盘仍完整显示在下方
-                val clipboardSearchExtra = if (state.clipboardSearchActive) 200 else 0
+                // 剪贴板搜索态：窗口撑满整屏（键盘+底部导航区以外的空间全部给搜索结果），
+                // 自研键盘完整保留在底部；最小 200dp 兜底横屏等矮屏场景。
+                val clipboardSearchExtra = if (state.clipboardSearchActive) {
+                    (effectiveScreenH - floatingCardContentHeight -
+                        state.keyboardBottomPaddingDp - activeBottomDp).coerceAtLeast(200)
+                } else 0
                 val panelExtra = quickSendFormExtra + clipboardSearchExtra
 
                 XimeTheme(darkTheme = isDarkTheme, themeId = state.themeId) {
@@ -962,6 +966,7 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
                                     clipboardSyncEnabled = state.clipboardSyncEnabled,
                                     clipboardSearchActive = state.clipboardSearchActive,
                                     clipboardSearchQuery = state.clipboardSearchQuery,
+                                    clipboardSearchExtraDp = clipboardSearchExtra,
                                 )
                             }
                             val callbacks = rememberImeKeyboardCallbacks(this@XimeInputMethodService, floatingMinY, state, effectiveScreenH)
@@ -1711,6 +1716,13 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
     }
 
     override fun commitText(text: String) {
+        // 剪贴板历史搜索态：RIME 上屏（拼音候选/空格首选/标点/英文键）一律重定向到搜索框，
+        // 绝不写入宿主输入框；同时跳过联想学习，避免搜索词污染用户语言模型。
+        if (uiState.value.clipboardSearchActive) {
+            val s = uiState.value
+            uiState.value = s.copy(clipboardSearchQuery = s.clipboardSearchQuery + text)
+            return
+        }
         if (uiState.value.quickSendFormFocused) {
             mainHandler.post {
                 QuickSendFormEditTextHolder.editText?.let { et ->

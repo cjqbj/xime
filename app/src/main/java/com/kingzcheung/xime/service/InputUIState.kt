@@ -49,8 +49,8 @@ data class InputUIState(
     val quickSendEditingItemId: Long? = null,
     val quickSendEditingItemText: String = "",
     val clipboardSyncEnabled: Boolean = false,
-    // 剪贴板历史搜索态：开启后 IME 窗口加高，剪贴板结果与自研 QWERTY 键盘同屏，
-    // 物理按键被重定向到搜索框，不再尝试在 IME 窗口内唤起系统键盘。
+    // 剪贴板历史搜索态：开启后 IME 窗口撑满全屏，剪贴板结果占满键盘上方空间，
+    // 自研键盘保留在底部；按键仍走 RIME 引擎（中文可组词），提交文本重定向写入搜索框。
     val clipboardSearchActive: Boolean = false,
     val clipboardSearchQuery: String = "",
 )

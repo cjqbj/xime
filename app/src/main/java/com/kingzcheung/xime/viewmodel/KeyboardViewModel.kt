@@ -81,9 +81,12 @@ data class KeyboardUiState(
     val quickSendEditingItemId: Long? = null,
     val quickSendEditingItemText: String = "",
     val clipboardSyncEnabled: Boolean = false,
-    // 剪贴板历史搜索态：开启后键盘窗口加高，搜索结果与 QWERTY 键盘同屏，按键直写搜索框
+    // 剪贴板历史搜索态：开启后键盘窗口加高到全屏，搜索结果占满键盘上方空间，
+    // 按键仍走 RIME 引擎（中文可组词），提交文本由服务层重定向写入搜索框
     val clipboardSearchActive: Boolean = false,
     val clipboardSearchQuery: String = "",
+    // 搜索态窗口加高量（dp）：动态撑满屏幕，面板高度与之保持一致
+    val clipboardSearchExtraDp: Int = 0,
 )
 
 class KeyboardViewModel(application: Application) : AndroidViewModel(application) {

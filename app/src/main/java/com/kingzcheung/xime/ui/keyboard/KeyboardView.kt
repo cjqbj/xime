@@ -224,8 +224,9 @@ fun KeyboardView(
         onCardPositioned = onCardPositioned,
     ) {
     Box(modifier = contentModifier) {
-        // 剪贴板历史搜索态：页面为剪贴板覆盖层且搜索开启时，候选栏下方以固定高度
-        // 展示剪贴板面板（搜索结果），下方继续渲染 QWERTY 键盘，二者同屏可输入。
+        // 剪贴板历史搜索态：页面为剪贴板覆盖层且搜索开启时，IME 窗口撑满全屏，
+        // 候选栏下方用全部剩余高度展示剪贴板面板（搜索结果），下方保留 QWERTY 键盘，
+        // 按键走 RIME 引擎可输中文，上屏文本由服务层重定向写入搜索框。
         // 定义在 Box 层：Column 内主键盘区与 Column 外的 Overlay 分支都要访问。
         val clipboardOverlayRoute = (page as? KeyboardPage.Overlay)?.route as? OverlayRoute.Clipboard
         val showClipboardSearchPanel = clipboardOverlayRoute?.tab == 0 && state.clipboardSearchActive
@@ -246,13 +247,18 @@ fun KeyboardView(
                 keyBgColor = keyBgColor,
                 viewModel = viewModel,
                 onSelectItem = { text ->
+                    // 必须先同步退出搜索态：否则 commitText 重定向会把待粘贴文本吞进搜索框
+                    if (state.clipboardSearchActive) {
+                        callbacks.onClipboardSearchToggle?.invoke(false)
+                    }
                     callbacks.onClipboardSelect?.invoke(text)
                     viewModel.closeOverlay()
                 },
                 onSplitWords = { text, _ -> viewModel.pushOverlay(OverlayRoute.SplitWords(text)) },
                 onBack = { viewModel.closeOverlay() },
                 onClipboardTabChange = { viewModel.pushOverlay(OverlayRoute.Clipboard(it)) },
-                bottomPaddingDp = state.keyboardBottomPaddingDp,
+                // 搜索态面板下方紧接自研键盘（键盘自带底部留白），面板内不再重复留白
+                bottomPaddingDp = if (state.clipboardSearchActive) 0 else state.keyboardBottomPaddingDp,
                 modifier = panelModifier,
                 onQuickSendAddClick = {
                     viewModel.closeOverlay()
@@ -432,8 +438,17 @@ fun KeyboardView(
                     },
                     onShowMoreCandidates = { viewModel.showOverlay(OverlayRoute.CandidatePage) },
                     onInputTextClick = {
-                        if (candidateState.value.inputText.isNotEmpty()) {
-                            callbacks.onClipboardSelect?.invoke(candidateState.value.inputText)
+                        val rawInput = candidateState.value.inputText
+                        if (rawInput.isNotEmpty()) {
+                            if (state.clipboardSearchActive) {
+                                // 搜索态：点原始编码把字母并入搜索框（不走剪贴板选中/复制副作用）
+                                callbacks.onClipboardSearchQueryChange?.invoke(
+                                    state.clipboardSearchQuery + rawInput
+                                )
+                                callbacks.onKeyPress?.invoke("clear_composition", false)
+                            } else {
+                                callbacks.onClipboardSelect?.invoke(rawInput)
+                            }
                         }
                     },
                     onAssociationSelect = { index ->
@@ -451,9 +466,11 @@ fun KeyboardView(
                 inlineSuggestions = inlineSuggestions,
             )
 
-            // 搜索态面板固定 200dp 高（与 IME 窗口加高量一致），下方 QWERTY 键盘完整保留
+            // 搜索态面板高度 = IME 窗口全屏加高量（撑满键盘上方全部空间），
+            // 下方 QWERTY 键盘保持原有高度完整保留
             if (showClipboardSearchPanel) {
-                clipboardPanel(Modifier.fillMaxWidth().height(200.dp))
+                val searchPanelHeightDp = state.clipboardSearchExtraDp.coerceAtLeast(200)
+                clipboardPanel(Modifier.fillMaxWidth().height(searchPanelHeightDp.dp))
             }
 
             val isMainKeyboard = page is KeyboardPage.Main || showClipboardSearchPanel

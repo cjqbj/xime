@@ -85,8 +85,9 @@ fun ClipboardView(
     onQuickSendEditItem: ((Long, String) -> Unit)? = null,
     onPullRemote: (() -> Unit)? = null,
     pullRemoteAvailable: Boolean = false,
-    // 搜索态由外部（键盘层/服务层）持有：开启时窗口加高，搜索框下方同屏显示自研键盘，
-    // 按键经 onKeyPress 重定向写入 searchQuery，不再向系统请求弹出键盘。
+    // 搜索态由外部（键盘层/服务层）持有：开启时 IME 窗口撑满全屏，搜索框下方同屏
+    // 显示自研 QWERTY 键盘；按键仍走 RIME 引擎（中文可组词），上屏文本重定向写入
+    // searchQuery，不在 IME 窗口内唤起系统键盘。
     searchActive: Boolean = false,
     searchQuery: String = "",
     onSearchActiveChange: ((Boolean) -> Unit)? = null,
