@@ -60,6 +60,10 @@ data class KeyboardUiState(
     val voiceBottomActive: Boolean = false,
     val voiceLeftActive: Boolean = false,
     val voiceRightActive: Boolean = false,
+    val voiceMuteActive: Boolean = false,
+    val sttMuteOthers: Boolean = false,
+    // 系统悬浮状态窗生效时键盘内小胶囊让位（由 service 计算：开关开且已授权）
+    val floatingVoiceLabel: Boolean = false,
     val voicePluginName: String = "",
     val voiceRecognitionState: RecognitionState = RecognitionState.IDLE,
     val voiceRecognizedText: String = "",

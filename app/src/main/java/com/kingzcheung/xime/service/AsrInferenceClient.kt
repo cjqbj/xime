@@ -104,6 +104,7 @@ class AsrInferenceClient(private val context: Context) {
 
     suspend fun startAsr(modelDir: String, callback: AsrCallback): Boolean = withContext(Dispatchers.IO) {
         try {
+            pushFailureCount = 0
             asrCallbackStub.attach(callback)
             requireService().startAsr(modelDir, asrCallbackStub)
         } catch (e: Exception) {
@@ -113,10 +114,19 @@ class AsrInferenceClient(private val context: Context) {
         }
     }
 
+    private var pushFailureCount = 0
+
     fun pushAsrAudio(audioData: ByteArray) {
         try {
             requireService().pushAsrAudio(audioData)
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            // 推送失败原本被静默吞掉，会表现为"录音正常但识别结果为空"；
+            // 限流打印（每会话最多 3 条），便于定位 binder 断连等问题
+            if (pushFailureCount < 3) {
+                pushFailureCount++
+                FileLogger.w(TAG, "pushAsrAudio failed (#$pushFailureCount): ${e.message}")
+            }
+        }
     }
 
     suspend fun stopAsr(): String = withContext(Dispatchers.IO) {

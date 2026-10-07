@@ -24,6 +24,11 @@ class VoiceRecognitionHandler(
 ) {
     companion object {
         private const val TAG = "VoiceRecognition"
+        // 抬手后等待完整 final 的时长：热按实测 final 约 1.2s 到（含 400ms 尾音 +
+        // 500ms 尾静音 + finalize）。超时未到才兜底提交最后 partial，防止 IPC 丢结果
+        private const val RELEASE_COMMIT_FALLBACK_MS = 2_000L
+        // 兜底已提交后，允许迟到 final 安全替换的时间窗
+        private const val REPLACE_WINDOW_MS = 3_000L
     }
 
     private lateinit var speechRecognitionManager: SpeechRecognitionManager
@@ -103,6 +108,12 @@ class VoiceRecognitionHandler(
             return
         }
 
+        // 新链路下录音线程在 startRecognition() 中已立即开麦；先前排队的预启动
+        // 回调若再执行会重复创建第二个 AudioRecord，两个录音实例并发抢占输入流，
+        // 会造成实时音频异常（冷模型走缓存回放时不易暴露，热模型实时推送时识别为空）
+        mainHandler.removeCallbacks(delayedPreStartRunnable)
+        speechRecognitionManager.cancelPreStart()
+
         textBeforeVoiceInput = getInputConnection()?.getTextBeforeCursor(1000, 0)?.toString() ?: ""
         textLengthBeforeVoiceInput = textBeforeVoiceInput.length
 
@@ -148,30 +159,74 @@ class VoiceRecognitionHandler(
     private var lastAmplitudeUpdate = 0L
     private var smoothedAmplitude = 0f
     private var smoothedSpectrum = FloatArray(16)
-    // 抬起时已提交当前识别文本后，置真以忽略随后可能迟到的重复最终结果
+    // 抬手后进入"等完整 final"状态：partial 回调忽略，final 到则一次性上屏完整句
     private var suppressDuplicateFinal = false
+    // 抬手后正在等待 final（兜底提交尚未执行）
+    private var releaseAwaitingFinal = false
+    // 超时兜底已把 partial 提交上屏
+    private var releaseCommitted = false
+    // 兜底提交的完整文本（含标点）与时间：极少数 final 晚于兜底到时，仅在能安全
+    // 校验光标前缀的普通 app 内替换；Termux 等终端读不到前缀也删不准，一律不替换
+    private var committedOnReleaseFull = ""
+    private var committedOnReleaseAtMs = 0L
     // 输入法窗口隐藏等场景：丢弃本会话，迟到结果不得写入任何输入框
     private var sessionAbandoned = false
+    // 抬手后录音线程仍在 finalize（采尾音/等模型/等 final 回调）：UI 保持"识别中"
+    @Volatile
+    private var releaseFinalizing = false
+
+    fun isFinalizing(): Boolean = releaseFinalizing
+
     private var errorToast: Toast? = null
+
+    private val releaseFallbackRunnable = Runnable {
+        if (!releaseAwaitingFinal) return@Runnable
+        val partial = lastPartialText
+        val ic = getInputConnection()
+        if (ic != null && partial.isNotEmpty()) {
+            val punctuated = addPunctuation(partial)
+            commitFinal(ic, punctuated, partial)
+            committedOnReleaseFull = punctuated
+            committedOnReleaseAtMs = System.currentTimeMillis()
+            Log.d(TAG, "Release fallback committed partial after timeout: '$punctuated'")
+        }
+        releaseCommitted = true
+        releaseAwaitingFinal = false
+    }
+
+    private fun resetReleaseState() {
+        mainHandler.removeCallbacks(releaseFallbackRunnable)
+        suppressDuplicateFinal = false
+        releaseAwaitingFinal = false
+        releaseCommitted = false
+        releaseFinalizing = false
+        committedOnReleaseFull = ""
+    }
 
     /** 输入法隐藏/切换输入框时调用：丢弃当前会话的未识别文本，忽略迟到的最终结果 */
     fun abandonSession() {
         sessionAbandoned = true
         lastPartialText = ""
+        resetReleaseState()
     }
 
-    // 语音按钮长按抬起时调用：立即提交当前已识别的文本（不依赖可能被断连竞态吞掉的异步最终结果）
+    // 语音按钮长按抬起时调用：不立即上屏 partial，而是等待完整 final（实测约 1.2s）
+    // 一次性提交，避免"先上屏半句→删除重提"在 Termux 等终端删不干净产生重复文本；
+    // final 超时丢失时由兜底 Runnable 提交最后 partial
     fun commitPendingOnRelease() {
         if (sessionAbandoned) return
-        val ic = getInputConnection()
         val partial = lastPartialText
-        Log.d(TAG, "commitPendingOnRelease: ic=${ic != null}, partial='$partial', suppress=$suppressDuplicateFinal")
-        if (ic == null) return
+        Log.d(TAG, "commitPendingOnRelease: ic=${getInputConnection() != null}, partial='$partial', suppress=$suppressDuplicateFinal")
+        // 抬手后进入 finalize 等待（冷按 partial 为空也要等：final 是唯一上屏路径，
+        // 录音线程有界等待模型 20s）；UI 据此保持"识别中"直到 final/错误
+        releaseFinalizing = true
         if (partial.isEmpty()) return
-        val punctuatedText = addPunctuation(partial)
-        commitFinal(ic, punctuatedText, partial)
         suppressDuplicateFinal = true
-        lastPartialText = ""
+        releaseAwaitingFinal = true
+        releaseCommitted = false
+        committedOnReleaseFull = ""
+        mainHandler.removeCallbacks(releaseFallbackRunnable)
+        mainHandler.postDelayed(releaseFallbackRunnable, RELEASE_COMMIT_FALLBACK_MS)
     }
 
     private fun handleSpeechResult(text: String) {
@@ -180,14 +235,27 @@ class VoiceRecognitionHandler(
         if (sessionAbandoned) {
             sessionAbandoned = false
             lastPartialText = ""
+            resetReleaseState()
             onVoiceComplete()
             return
         }
 
-        if (suppressDuplicateFinal) {
-            // 抬起时已提交，忽略迟到的重复最终结果
-            suppressDuplicateFinal = false
+        if (releaseAwaitingFinal || releaseCommitted) {
+            mainHandler.removeCallbacks(releaseFallbackRunnable)
+            val cleanText = text.replace(" ", "").trim()
+            if (!releaseCommitted) {
+                // final 在兜底超时前到达：直接一次性提交完整句，不做任何删除操作，
+                // Termux 等终端也安全
+                val ic = getInputConnection()
+                if (ic != null && cleanText.isNotEmpty() && !cleanText.startsWith("错误:")) {
+                    commitFinal(ic, addPunctuation(cleanText), lastPartialText)
+                }
+            } else {
+                // 兜底已提交 partial，final 更晚才到：仅在能读光标前缀的普通 app 替换
+                replaceCommittedIfVerified(cleanText)
+            }
             lastPartialText = ""
+            resetReleaseState()
             onVoiceComplete()
             return
         }
@@ -200,6 +268,36 @@ class VoiceRecognitionHandler(
         }
         lastPartialText = ""
         onVoiceComplete()
+    }
+
+    /**
+     * 兜底已上屏 partial 后迟到的更完整 final：只在 InputConnection 能读回光标前缀、
+     * 且前缀确实以已提交文本结尾时才删除重提。Termux 等终端 getTextBeforeCursor
+     * 返回空串且 deleteSurroundingText 行为不可靠，直接放弃替换（保留兜底文本，
+     * 宁可丢尾字也绝不产生重复乱序文本）。
+     */
+    private fun replaceCommittedIfVerified(cleanFinal: String) {
+        val committed = committedOnReleaseFull
+        if (committed.isEmpty()) return
+        if (System.currentTimeMillis() - committedOnReleaseAtMs > REPLACE_WINDOW_MS) {
+            Log.d(TAG, "Fuller final arrived too late; skip replace")
+            return
+        }
+        if (cleanFinal.isEmpty() || cleanFinal.startsWith("错误:")) return
+        val committedCore = committed.trimEnd(*"。！？，、；：,.!?;:".toCharArray())
+        if (cleanFinal.length <= committedCore.length) return
+
+        val ic = getInputConnection() ?: return
+        val before = ic.getTextBeforeCursor(committed.length + 4, 0)?.toString()
+        if (before.isNullOrEmpty() || !before.endsWith(committed)) {
+            Log.d(TAG, "Fuller final but prefix unverifiable (beforeLen=${before?.length ?: -1}); skip replace")
+            return
+        }
+        ic.finishComposingText()
+        ic.deleteSurroundingText(committed.length, 0)
+        val replacement = addPunctuation(cleanFinal)
+        ic.commitText(replacement, 1)
+        Log.d(TAG, "Replaced fallback text with verified final: '$committed' -> '$replacement'")
     }
     
     // 增量语音模式：先结束 composing，再只提交增量，避免重复与整段重写。
@@ -241,7 +339,10 @@ class VoiceRecognitionHandler(
     }
 
     private fun handlePartialResult(text: String) {
-        if (sessionAbandoned || suppressDuplicateFinal) return
+        // 等待 final 期间继续让尾音 partial 刷新 composing：最终 final 多以 partial 为
+        // 前缀，只需补提交增量（Termux 等终端 composing 已落盘时同样正确）；
+        // 兜底已提交或会话丢弃后才屏蔽，避免污染已上屏文本
+        if (sessionAbandoned || releaseCommitted) return
         if (text == lastPartialText) return
         lastPartialText = text
         Log.d(TAG, "Speech result (partial): $text")
@@ -261,8 +362,11 @@ class VoiceRecognitionHandler(
         Log.d(TAG, "Speech state changed: $state")
         if (state == RecognitionState.LISTENING) {
             lastPartialText = ""
-            suppressDuplicateFinal = false
             sessionAbandoned = false
+            resetReleaseState()
+        } else if (state == RecognitionState.IDLE) {
+            // AsrStop 线程保证 IDLE 在 final 回调之后：收尾完成，复位抬手等待态
+            releaseFinalizing = false
         }
         onStateChanged(getState().copy(voiceRecognitionState = state))
     }
@@ -271,6 +375,7 @@ class VoiceRecognitionHandler(
         Log.e(TAG, "Speech error: $error")
         FileLogger.e(TAG, "Speech error: $error")
         lastPartialText = ""
+        resetReleaseState()
         if (userVisible && error.isNotBlank()) {
             errorToast?.cancel()
             errorToast = Toast.makeText(context, error, Toast.LENGTH_LONG)

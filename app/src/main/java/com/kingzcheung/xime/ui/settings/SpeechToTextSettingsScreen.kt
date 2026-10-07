@@ -1,6 +1,7 @@
 package com.kingzcheung.xime.ui.settings
 
 import android.content.Context
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +27,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -37,10 +40,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -65,6 +70,9 @@ import com.kingzcheung.xime.plugin.core.api.AsrPlugin
 import com.kingzcheung.xime.plugin.core.runtime.PluginManager
 import com.kingzcheung.xime.speech.AsrBackendFactory
 import com.kingzcheung.xime.settings.SettingsPreferences
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -97,6 +105,29 @@ fun SpeechToTextSettingsContent(
 
     var useLocal by remember {
         mutableStateOf(OfflineAsrSettings.isSupported() && SettingsPreferences.isSttUseLocal(context))
+    }
+
+    var muteOthers by remember {
+        mutableStateOf(SettingsPreferences.isSttMuteOthers(context))
+    }
+
+    // 录音悬浮窗：开关存用户意愿，实际显示还要有"显示在其他应用上层"权限
+    var floatingLabel by remember {
+        mutableStateOf(SettingsPreferences.isSttFloatingLabel(context))
+    }
+    var hasOverlayPermission by remember {
+        mutableStateOf(android.provider.Settings.canDrawOverlays(context))
+    }
+    // 从系统授权页返回时刷新权限状态
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasOverlayPermission = Settings.canDrawOverlays(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val onlineProviders = remember(activeAsrPluginId) {
@@ -165,6 +196,111 @@ fun SpeechToTextSettingsContent(
                 .fillMaxSize()
                 .padding(padding)
         ) {
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 录音时静音其他应用（请求音频焦点）。放在引擎选择/模型卡片之前：
+            // ModelSection 与在线列表均 fillMaxSize，置于其后会被挤出可视区域。
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.VolumeOff,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "录音时静音其他应用",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            text = "语音输入时暂停或降低抖音、音乐等其他应用的播放声",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Switch(
+                        checked = muteOthers,
+                        onCheckedChange = {
+                            muteOthers = it
+                            SettingsPreferences.setSttMuteOthers(context, it)
+                        }
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 录音状态系统悬浮窗（键盘窗口之外，抖音等全屏 App 中也可见）
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Mic,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "录音悬浮窗",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            text = if (floatingLabel && !hasOverlayPermission)
+                                "需授予\"显示在其他应用上层\"权限，点击开关前往授权"
+                            else
+                                "录音和识别时在屏幕中上部悬浮显示状态，其他应用中也可见",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (floatingLabel && !hasOverlayPermission)
+                                MaterialTheme.colorScheme.error
+                            else
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Switch(
+                        checked = floatingLabel,
+                        onCheckedChange = { wantOn ->
+                            floatingLabel = wantOn
+                            SettingsPreferences.setSttFloatingLabel(context, wantOn)
+                            if (wantOn && !android.provider.Settings.canDrawOverlays(context)) {
+                                // 跳转系统"显示在其他应用上层"授权页
+                                val intent = android.content.Intent(
+                                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    android.net.Uri.parse("package:${context.packageName}")
+                                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                context.startActivity(intent)
+                            }
+                        }
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(8.dp))
 
             val scope = rememberCoroutineScope()

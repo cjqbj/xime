@@ -45,6 +45,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -283,6 +284,10 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
         }
     )
 
+    // 语音状态系统悬浮窗（键盘窗口之外，屏幕中上部），仅在开关打开且已授权时显示
+    private val floatingVoiceLabel = FloatingVoiceLabel(this)
+    private var hideFloatingLabelJob: Job? = null
+
     /**
      * 结束语音会话的统一出口：提交已识别文本、停止识别与预启动、恢复键盘状态。
      * 幂等：识别已停止/无文本时各步骤自动跳过。
@@ -295,12 +300,15 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
         isTrackingVoiceButtons = false
         voiceRecordingStarted = false
         voiceAmplitudeState.floatValue = 0f
+        // 抬手后录音线程仍在 finalize（尾音回放/等模型/等最终结果）：保持"识别中"
+        // 状态与已识别文字，悬浮标签持续可见，直到最终结果上屏后线程回调 IDLE
+        val stillFinalizing = voiceRecognitionHandler.isFinalizing()
         uiState.value = uiState.value.copy(
             isVoiceMode = false,
             voiceSticky = false,
             voiceButtonState = VoiceButtonState(),
-            voiceRecognitionState = RecognitionState.IDLE,
-            voiceRecognizedText = "",
+            voiceRecognitionState = if (stillFinalizing) RecognitionState.PROCESSING else RecognitionState.IDLE,
+            voiceRecognizedText = if (stillFinalizing) uiState.value.voiceRecognizedText else "",
             voiceAmplitude = 0f
         )
     }
@@ -449,6 +457,7 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
         
         loadDarkModePreference()
         registerSharedPrefsListener()
+        setupFloatingVoiceLabel()
         
         initRimeEngine()
         
@@ -471,6 +480,79 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
     
     private fun initSpeechRecognition() {
         voiceRecognitionHandler.initialize()
+    }
+
+    /**
+     * 监听识别状态：开关打开且已授予悬浮窗权限时，用系统悬浮窗（FloatingVoiceLabel）
+     * 在键盘窗口之外展示"正在聆听/录音中：临时文本/识别中"；否则完全不显示，
+     * 由键盘内小胶囊 VoiceStatusLabel 兜底。悬浮窗文案逻辑与小胶囊保持一致。
+     */
+    private fun setupFloatingVoiceLabel() {
+        serviceScope.launch(Dispatchers.Main.immediate) {
+            var seenListening = false
+            var heldText = ""
+            snapshotFlow {
+                uiState.value.voiceRecognitionState to uiState.value.voiceRecognizedText
+            }.collect { (state, text) ->
+                val floatingOn = SettingsPreferences.isSttFloatingLabel(this@XimeInputMethodService) &&
+                    android.provider.Settings.canDrawOverlays(this@XimeInputMethodService)
+                if (uiState.value.floatingVoiceLabel != floatingOn) {
+                    uiState.value = uiState.value.copy(floatingVoiceLabel = floatingOn)
+                }
+                if (!floatingOn) {
+                    hideFloatingLabelJob?.cancel()
+                    floatingVoiceLabel.hide()
+                    return@collect
+                }
+                when (state) {
+                    RecognitionState.LISTENING -> {
+                        seenListening = true
+                        if (text.isNotEmpty()) heldText = text
+                        hideFloatingLabelJob?.cancel()
+                        floatingVoiceLabel.show(
+                            if (text.isEmpty()) "正在聆听…" else "录音中：$text",
+                            isListening = true
+                        )
+                    }
+                    RecognitionState.PROCESSING -> {
+                        hideFloatingLabelJob?.cancel()
+                        floatingVoiceLabel.show(
+                            if (seenListening) {
+                                if (heldText.isNotEmpty()) "识别中：$heldText" else "识别中…"
+                            } else {
+                                "正在准备录音…"
+                            },
+                            isListening = false
+                        )
+                    }
+                    RecognitionState.ERROR -> {
+                        hideFloatingLabelJob?.cancel()
+                        floatingVoiceLabel.show(
+                            if (text.isNotEmpty()) "识别失败：$text" else "识别失败，请重试",
+                            isListening = false
+                        )
+                        seenListening = false
+                        heldText = ""
+                        hideFloatingLabelJob = launch {
+                            delay(1600)
+                            floatingVoiceLabel.hide()
+                        }
+                    }
+                    RecognitionState.IDLE -> {
+                        seenListening = false
+                        if (floatingVoiceLabel.isShowing) {
+                            hideFloatingLabelJob = launch {
+                                delay(800)
+                                floatingVoiceLabel.hide()
+                                heldText = ""
+                            }
+                        } else {
+                            heldText = ""
+                        }
+                    }
+                }
+            }
+        }
     }
     
     private fun initAssociationEngine() {
@@ -739,6 +821,19 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
                 uiState.value = uiState.value.copy(
                     swipeCancelEpoch = uiState.value.swipeCancelEpoch + 1
                 )
+            },
+            onToggleMute = {
+                // 语音页上滑热区松手：翻转"录音时静音其他应用"并持久记住（下次录音生效）
+                val enabled = !SettingsPreferences.isSttMuteOthers(this)
+                SettingsPreferences.setSttMuteOthers(this, enabled)
+                uiState.value = uiState.value.copy(sttMuteOthers = enabled)
+                feedbackManager.performVibration()
+                android.widget.Toast.makeText(
+                    this,
+                    if (enabled) "已开启：下次语音输入时静音其他应用"
+                    else "已关闭：录音时不再静音其他应用",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
             }
         )
         
@@ -843,10 +938,16 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
                             // 键盘内容在 Compose 内贴底，由 onComputeInsets 报告键盘内容顶部。
                             if (state.isCompact || state.isFloatingMode) {
                                 keyboardContainer.updateHeight(totalDp)
+                                // 容器高度即内容高度，热区阈值直接按容器高度划分
+                                keyboardContainer.setKeyboardContentHeightPx(0)
                             } else {
                                 // 从悬浮/紧凑模式切回时恢复容器为 MATCH_PARENT，
                                 // 否则容器高度残留悬浮时的固定值导致布局异常。
                                 keyboardContainer.resetHeight()
+                                // 同步键盘内容高度（px），供语音页上滑热区按键盘几何分区
+                                keyboardContainer.setKeyboardContentHeightPx(
+                                    (totalDp * resources.displayMetrics.density).toInt()
+                                )
                             }
                             currentEffectiveKeyboardHeight = if (state.isFloatingMode) keyboardHeight + floatingDragBarHeight + 50 + state.keyboardBottomPaddingDp
                                 else if (state.isCompact) HARDWARE_CANDIDATE_BAR_HEIGHT
@@ -943,6 +1044,9 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
                                     voiceBottomActive = state.voiceButtonState.bottomActive,
                                     voiceLeftActive = state.voiceButtonState.leftActive,
                                     voiceRightActive = state.voiceButtonState.rightActive,
+                                    voiceMuteActive = state.voiceButtonState.muteActive,
+                                    sttMuteOthers = state.sttMuteOthers,
+                                    floatingVoiceLabel = state.floatingVoiceLabel,
                                     voicePluginName = state.voicePluginName,
                                     voiceRecognitionState = state.voiceRecognitionState,
                                     voiceRecognizedText = state.voiceRecognizedText,
@@ -1589,6 +1693,9 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
         rimeEngine.destroy()
         AssociationManager.release()
         voiceRecognitionHandler.release()
+        // 兜底移除系统悬浮窗，避免 IME 销毁后窗口泄漏
+        hideFloatingLabelJob?.cancel()
+        floatingVoiceLabel.hide()
         com.kingzcheung.xime.handwriting.HandwritingEngine.release()
         ExtensionManager.release()
         com.kingzcheung.xime.association.NativeOnnxEngine.releaseSharedEnv()

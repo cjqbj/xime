@@ -33,6 +33,8 @@ object SettingsPreferences {
     const val KEY_STT_ONLINE_PLUGIN_ID = "stt_online_plugin_id"
     const val KEY_STT_USE_LOCAL = "stt_use_local"
     const val KEY_STT_DEBUG_RECORD = "stt_debug_record"
+    const val KEY_STT_MUTE_OTHERS = "stt_mute_others"
+    const val KEY_STT_FLOATING_LABEL = "stt_floating_label"
     
     /** 默认主题 ID，可从 xime.yaml 的 style.color_scheme 初始化。 */
     @JvmStatic
@@ -406,6 +408,24 @@ object SettingsPreferences {
 
     fun setSttUseLocal(context: Context, useLocal: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_STT_USE_LOCAL, useLocal).apply()
+    }
+
+    /** 语音录音时是否请求音频焦点，静音/暂停其他应用（如抖音、音乐）的播放。 */
+    fun isSttMuteOthers(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_STT_MUTE_OTHERS, false)
+    }
+
+    fun setSttMuteOthers(context: Context, mute: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_STT_MUTE_OTHERS, mute).apply()
+    }
+
+    /** 是否在语音录音/识别期间通过系统悬浮窗（键盘窗口之外）显示状态。 */
+    fun isSttFloatingLabel(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_STT_FLOATING_LABEL, false)
+    }
+
+    fun setSttFloatingLabel(context: Context, enabled: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_STT_FLOATING_LABEL, enabled).apply()
     }
 
     /** 是否把语音识别期间的录音写入文件（调试用）。 */

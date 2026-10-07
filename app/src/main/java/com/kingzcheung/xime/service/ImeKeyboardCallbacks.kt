@@ -198,6 +198,7 @@ internal fun rememberImeKeyboardCallbacks(
                         isVoiceMode = true,
                         voiceSticky = false,
                         voiceButtonState = VoiceButtonState(bottomActive = true),
+                        sttMuteOthers = SettingsPreferences.isSttMuteOthers(service),
                         voiceRecognizedText = ""
                     )
                     service.keyboardViewModel.enterVoice()

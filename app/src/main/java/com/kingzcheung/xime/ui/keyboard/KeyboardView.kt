@@ -791,6 +791,8 @@ fun KeyboardView(
                             bottomActive = state.voiceBottomActive,
                             leftActive = state.voiceLeftActive,
                             rightActive = state.voiceRightActive,
+                            muteActive = state.voiceMuteActive,
+                            muteOthersEnabled = state.sttMuteOthers,
                             pluginName = state.voicePluginName,
                             recognitionState = state.voiceRecognitionState,
                             recognizedText = state.voiceRecognizedText,
@@ -875,6 +877,19 @@ fun KeyboardView(
 
             val configuration = LocalConfiguration.current
             val isLandscapeBottom = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        }
+
+        // 语音状态悬浮标签：半透明覆盖在输入工具栏上方，只显示文本状态，
+        // 不拦截触摸（无 pointerInput/clickable，事件穿透到工具栏与语音按钮区）。
+        // 长按空格时键盘切到 MainType.VOICE 语音页（频谱+松开结束），标签同样
+        // 浮在该页工具栏上方；非语音态状态为 IDLE，标签自动隐藏，不影响其他页面。
+        // 系统悬浮窗生效时（开关开+已授权）状态由键盘外悬浮卡片展示，键盘内胶囊让位避免重复
+        if (page is KeyboardPage.Main && !state.floatingVoiceLabel) {
+            VoiceStatusLabel(
+                recognitionState = state.voiceRecognitionState,
+                recognizedText = state.voiceRecognizedText,
+                modifier = Modifier.align(Alignment.TopCenter)
+            )
         }
 
         if (state.isDeploying) {
@@ -1078,6 +1093,73 @@ fun KeyboardView(
         }
     }
 }
+}
+
+/**
+ * 语音输入过程状态悬浮标签（临时可观测性 UI）：
+ * 半透明覆盖在输入工具栏上方，仅显示文本；不设置任何点击/手势修饰符，
+ * 不参与触摸命中，工具栏按钮点击完全不受影响。
+ * 抬手后 UI 保持 PROCESSING（service 层 finalizing 标志驱动）直到最终结果上屏，
+ * 冷按等模型的数秒内也持续可见，消除"录音→计算→上屏"黑箱。
+ */
+@androidx.compose.runtime.Composable
+private fun VoiceStatusLabel(
+    recognitionState: com.kingzcheung.xime.speech.RecognitionState,
+    recognizedText: String,
+    modifier: Modifier = Modifier
+) {
+    var heldText by remember { mutableStateOf("") }
+    // 本次会话是否已进入过聆听态：区分"按下初始准备"与"抬手后计算中"两种 PROCESSING
+    var seenListening by remember { mutableStateOf(false) }
+    SideEffect {
+        when (recognitionState) {
+            com.kingzcheung.xime.speech.RecognitionState.LISTENING -> {
+                seenListening = true
+                if (recognizedText.isNotEmpty()) heldText = recognizedText
+            }
+            com.kingzcheung.xime.speech.RecognitionState.IDLE -> seenListening = false
+            else -> {}
+        }
+    }
+    LaunchedEffect(recognitionState) {
+        if (recognitionState == com.kingzcheung.xime.speech.RecognitionState.IDLE) {
+            kotlinx.coroutines.delay(800)
+            heldText = ""
+        }
+    }
+
+    val visible = recognitionState == com.kingzcheung.xime.speech.RecognitionState.PROCESSING ||
+        recognitionState == com.kingzcheung.xime.speech.RecognitionState.LISTENING ||
+        (recognitionState == com.kingzcheung.xime.speech.RecognitionState.IDLE && heldText.isNotEmpty())
+    if (!visible) return
+
+    val label = when (recognitionState) {
+        com.kingzcheung.xime.speech.RecognitionState.PROCESSING ->
+            if (seenListening) {
+                if (heldText.isNotEmpty()) "识别中：$heldText" else "识别中…"
+            } else {
+                "正在准备录音…"
+            }
+        com.kingzcheung.xime.speech.RecognitionState.LISTENING ->
+            if (recognizedText.isEmpty()) "正在聆听…" else "录音中：$recognizedText"
+        else -> "识别中：$heldText"
+    }
+
+    androidx.compose.material3.Surface(
+        modifier = modifier
+            .padding(horizontal = 24.dp, vertical = 2.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xB3000000)
+    ) {
+        Text(
+            text = label,
+            color = Color.White,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+        )
+    }
 }
 
 

@@ -18,11 +18,19 @@ class VoiceKeyboardContainer(
     private val setRecording: (Boolean) -> Unit,
     private val onVoiceDismiss: () -> Unit = {},
     private val onTouchCancel: () -> Unit = {},
+    private val onToggleMute: () -> Unit = {},
 ) : FrameLayout(context) {
 
     private var isTrackingVoiceButtons = false
-    private var lastLeftActive = false
-    private var lastRightActive = false
+    private var lastZone: String? = null
+
+    // 普通模式下本容器为 MATCH_PARENT（整屏高），键盘内容只占底部一块。
+    // 记录键盘内容高度（px），热区按键盘区几何划分；<=0 时回退按容器高度 60% 划分。
+    private var keyboardContentHeightPx: Int = 0
+
+    fun setKeyboardContentHeightPx(px: Int) {
+        keyboardContentHeightPx = px
+    }
 
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -32,6 +40,15 @@ class VoiceKeyboardContainer(
     fun enableVoiceButtonTracking() {
         isTrackingVoiceButtons = true
     }
+
+    // "按住说话"底部条的顶边（相对容器的 y，px）：键盘内容区下 40%。
+    // 容器全屏时不能用 height*0.6，否则整个键盘都会落在底部区，上部热区永远摸不到。
+    private fun bottomZoneTopY(): Float =
+        if (keyboardContentHeightPx > 0) {
+            height - keyboardContentHeightPx * 0.4f
+        } else {
+            height * 0.6f
+        }
 
     fun updateHeight(heightDp: Int) {
         val heightPx = (heightDp * resources.displayMetrics.density).toInt()
@@ -80,11 +97,10 @@ class VoiceKeyboardContainer(
         val uiState = uiStateProvider()
         val isVoiceMode = uiState.isVoiceMode && !uiState.voiceSticky
 
-        lastLeftActive = false
-        lastRightActive = false
+        lastZone = null
 
         if (isVoiceMode) {
-            val yThreshold = height * 0.6f
+            val yThreshold = bottomZoneTopY()
 
             if (ev.y > yThreshold) {
                 isTrackingVoiceButtons = true
@@ -101,8 +117,7 @@ class VoiceKeyboardContainer(
         // 常驻语音（工具栏进入）不拦截触摸：空格键/工具栏自行结束语音
         if (state.voiceSticky) {
             isTrackingVoiceButtons = false
-            lastLeftActive = false
-            lastRightActive = false
+            lastZone = null
             return
         }
 
@@ -111,6 +126,9 @@ class VoiceKeyboardContainer(
                 onPerformUndo()
             } else if (state.voiceButtonState.rightActive) {
                 onPerformSearch()
+            } else if (state.voiceButtonState.muteActive) {
+                // 上滑到顶部中央热区松手：切换"录音时静音其他应用"（对下次录音生效）
+                onToggleMute()
             }
 
             if (isRecording()) {
@@ -124,69 +142,39 @@ class VoiceKeyboardContainer(
         }
 
         isTrackingVoiceButtons = false
-        lastLeftActive = false
-        lastRightActive = false
+        lastZone = null
     }
 
     private fun handleActionMove(ev: MotionEvent) {
         val isVoiceMode = uiStateProvider().isVoiceMode && !uiStateProvider().voiceSticky
 
         if (isVoiceMode && isTrackingVoiceButtons) {
-            val yThreshold = height * 0.6f
+            val yThreshold = bottomZoneTopY()
             val leftButtonEnd = width * 0.25f
             val rightButtonStart = width * 0.75f
 
-            if (ev.y > yThreshold) {
-                when {
-                    ev.x < leftButtonEnd -> {
-                        if (!lastLeftActive) {
-                            onPerformVibration(this@VoiceKeyboardContainer)
-                            lastLeftActive = true
-                        }
-                        onUiStateChanged(uiStateProvider().copy(
-                            voiceButtonState = VoiceButtonState(leftActive = true)
-                        ))
-                    }
-                    ev.x > rightButtonStart -> {
-                        if (!lastRightActive) {
-                            onPerformVibration(this@VoiceKeyboardContainer)
-                            lastRightActive = true
-                        }
-                        onUiStateChanged(uiStateProvider().copy(
-                            voiceButtonState = VoiceButtonState(rightActive = true)
-                        ))
-                    }
-                    else -> {
-                        lastLeftActive = false
-                        lastRightActive = false
-                        onUiStateChanged(uiStateProvider().copy(
-                            voiceButtonState = VoiceButtonState(bottomActive = true)
-                        ))
-                    }
-                }
-            } else if (ev.x < leftButtonEnd) {
-                if (!lastLeftActive) {
-                    onPerformVibration(this@VoiceKeyboardContainer)
-                    lastLeftActive = true
-                }
-                onUiStateChanged(uiStateProvider().copy(
-                    voiceButtonState = VoiceButtonState(leftActive = true)
-                ))
-            } else if (ev.x > rightButtonStart) {
-                if (!lastRightActive) {
-                    onPerformVibration(this@VoiceKeyboardContainer)
-                    lastRightActive = true
-                }
-                onUiStateChanged(uiStateProvider().copy(
-                    voiceButtonState = VoiceButtonState(rightActive = true)
-                ))
-            } else {
-                lastLeftActive = false
-                lastRightActive = false
-                onUiStateChanged(uiStateProvider().copy(
-                    voiceButtonState = VoiceButtonState()
-                ))
+            // 分区：底部（y>60%）左/右=撤销/发送、中=按住说话；
+            // 上部左/右同上滑撤销/发送，上部中央=切换"录音时静音其他应用"
+            val zone = when {
+                ev.x < leftButtonEnd -> "left"
+                ev.x > rightButtonStart -> "right"
+                ev.y > yThreshold -> "bottom"
+                else -> "mute"
             }
+
+            // 仅在手指进入新区域时震动一次
+            if (zone != lastZone) {
+                onPerformVibration(this@VoiceKeyboardContainer)
+                lastZone = zone
+            }
+
+            val newState = when (zone) {
+                "left" -> VoiceButtonState(leftActive = true)
+                "right" -> VoiceButtonState(rightActive = true)
+                "bottom" -> VoiceButtonState(bottomActive = true)
+                else -> VoiceButtonState(muteActive = true)
+            }
+            onUiStateChanged(uiStateProvider().copy(voiceButtonState = newState))
         }
     }
 }

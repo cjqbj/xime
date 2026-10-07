@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -55,6 +57,8 @@ fun VoiceKeyboardLayout(
     bottomActive: Boolean = false,
     leftActive: Boolean = false,
     rightActive: Boolean = false,
+    muteActive: Boolean = false,
+    muteOthersEnabled: Boolean = false,
     pluginName: String = "",
     recognitionState: RecognitionState = RecognitionState.IDLE,
     recognizedText: String = "",
@@ -64,7 +68,7 @@ fun VoiceKeyboardLayout(
     val accentColor = KeyboardThemes.getAccentColor(themeId, isDarkTheme)
     val inactiveColor = if (isDarkTheme) Color.Gray.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.9f)
     val activeColor = accentColor
-    
+
     Column(
         modifier = modifier
             .fillMaxSize(),
@@ -74,11 +78,13 @@ fun VoiceKeyboardLayout(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .padding(top = 16.dp),
+                .padding(top = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (pluginName.isNotEmpty()) {
+            // 录音中状态由悬浮标签承担，插件名（如"本地 Zipformer"）属于次要信息，
+            // 只在空闲时显示，避免挤占上方静音热区提示的空间
+            if (pluginName.isNotEmpty() && recognitionState == RecognitionState.IDLE) {
                 Text(
                     text = pluginName,
                     color = keyTextColor.copy(alpha = 0.6f),
@@ -97,17 +103,20 @@ fun VoiceKeyboardLayout(
                 RecognitionState.ERROR -> "识别出错"
             }
             
-            Text(
-                text = statusText,
-                color = keyTextColor.copy(alpha = 0.8f),
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Center
-            )
-            
+            // 录音/识别/出错状态由悬浮状态标签（VoiceStatusLabel）展示，这里只在空闲时提示
+            if (recognitionState == RecognitionState.IDLE) {
+                Text(
+                    text = statusText,
+                    color = keyTextColor.copy(alpha = 0.8f),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center
+                )
+            }
+
             if (recognizedText.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
-                
+
                 Text(
                     text = recognizedText,
                     color = MaterialTheme.colorScheme.primary,
@@ -119,21 +128,59 @@ fun VoiceKeyboardLayout(
                     modifier = Modifier.padding(horizontal = 24.dp)
                 )
             }
+
+            // 上滑到顶部中央热区松手：切换"录音时静音其他应用"
+            val willMute = muteOthersEnabled xor muteActive
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Box(
+                    modifier = Modifier.size(if (muteActive) 36.dp else 28.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        drawCircle(
+                            color = if (muteActive) activeColor else inactiveColor.copy(alpha = 0.35f)
+                        )
+                    }
+                    Icon(
+                        imageVector = if (willMute) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                        contentDescription = "静音其他应用",
+                        tint = if (muteActive) Color.White else keyTextColor.copy(alpha = 0.75f),
+                        modifier = Modifier.size(if (muteActive) 20.dp else 16.dp)
+                    )
+                }
+                Text(
+                    text = if (muteActive) {
+                        if (willMute) "松开开启：静音其他应用" else "松开关闭：录音时不静音"
+                    } else {
+                        if (muteOthersEnabled) "上滑此处可关闭静音（当前：开）"
+                        else "上滑此处可静音其他应用（当前：关）"
+                    },
+                    color = if (muteActive) MaterialTheme.colorScheme.primary
+                    else keyTextColor.copy(alpha = 0.65f),
+                    fontSize = 12.sp,
+                    fontWeight = if (muteActive) FontWeight.Medium else FontWeight.Normal,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
+                )
+            }
         }
         
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 20.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                modifier = Modifier.size(64.dp),
+                modifier = Modifier.size(56.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Canvas(
-                    modifier = Modifier.size(if (leftActive) 64.dp else 56.dp)
+                    modifier = Modifier.size(if (leftActive) 56.dp else 48.dp)
                 ) {
                     drawCircle(
                         color = if (leftActive) activeColor else inactiveColor,
@@ -178,11 +225,11 @@ fun VoiceKeyboardLayout(
             }
             
             Box(
-                modifier = Modifier.size(64.dp),
+                modifier = Modifier.size(56.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Canvas(
-                    modifier = Modifier.size(if (rightActive) 64.dp else 56.dp)
+                    modifier = Modifier.size(if (rightActive) 56.dp else 48.dp)
                 ) {
                     drawCircle(
                         color = if (rightActive) activeColor else inactiveColor,
@@ -203,7 +250,7 @@ fun VoiceKeyboardLayout(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(80.dp),
+                .height(60.dp),
             contentAlignment = Alignment.Center
         ) {
             Canvas(
