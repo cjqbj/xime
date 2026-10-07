@@ -37,6 +37,35 @@ if(EXISTS "${LUA_LIOLIB_SRC}")
   endif()
 endif()
 
+# 修复单字母简拼被同形全拼音节遮蔽的问题（输入 m 首选“呒”而非“吗/嘛”，
+# 输入 n 只有“嗯”而非“你/那”，a/e/o 同理）。
+# librime 的音节图在逆向剪枝时，若输入能被一条全拼(normal)路径完整解释，
+# 就会删除路径上所有缩写(abbreviation)边；当字母本身是叹词音节时
+# （呒 m、嗯 n、啊 a、额 e、哦 o），以该字母为首字母简拼的高频字
+# （吗 ma、你 ni、爱 ai…）永远无法成为候选，用户反复选词也无法学习。
+# 将缩写边的保留下限从 kFuzzySpelling 提升到 kAbbreviation，使简拼候选与
+# 全拼候选共存，先后次序交给简拼 credibility 罚分(-2.3)、词频与用户词库
+# 学习在排序阶段决定（高频常用字自然排前，越用越准）。
+set(SYLLABIFIER_SRC "${CMAKE_SOURCE_DIR}/librime/src/rime/algo/syllabifier.cc")
+if(EXISTS "${SYLLABIFIER_SRC}")
+  file(READ "${SYLLABIFIER_SRC}" SYLLABIFIER_CONTENT)
+  string(FIND "${SYLLABIFIER_CONTENT}" "kAbbrevSimpleSpellPatchedMarker" SYLLABIFIER_PATCHED)
+  if(SYLLABIFIER_PATCHED EQUAL -1)
+    string(FIND "${SYLLABIFIER_CONTENT}"
+      "graph->vertices[farthest], kFuzzySpelling" SYLLABIFIER_ANCHOR)
+    if(SYLLABIFIER_ANCHOR GREATER -1)
+      string(REPLACE
+        "graph->vertices[farthest], kFuzzySpelling"
+        "graph->vertices[farthest], kAbbreviation /*kAbbrevSimpleSpellPatchedMarker*/"
+        SYLLABIFIER_CONTENT "${SYLLABIFIER_CONTENT}")
+      file(WRITE "${SYLLABIFIER_SRC}" "${SYLLABIFIER_CONTENT}")
+      message(STATUS "librime syllabifier patched: keep abbreviation edges alongside exact spellings")
+    else()
+      message(WARNING "syllabifier.cc patch anchor not found; single-letter abbreviations may stay shadowed")
+    endif()
+  endif()
+endif()
+
 # 已集成的插件
 set(RIME_PLUGINS librime-octagram librime-predict librime-t9)
 

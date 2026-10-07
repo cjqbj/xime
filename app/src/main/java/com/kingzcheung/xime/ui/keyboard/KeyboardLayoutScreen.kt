@@ -178,6 +178,11 @@ fun KeyboardLayoutScreen(
                 CommonSymbolKeyboardLayout(
                     onKeyPress = onKeyPress,
                     isAsciiMode = uiState.isAsciiMode,
+                    // 与 KeyboardView 的 Panel 路径保持一致：符号面板首次进入默认英文，
+                    // 使中文模式下符号键（@ # $ 等）默认输出半角
+                    initialAsciiMode = viewModel.asciiStateMachine.targetFor(
+                        AsciiKeyboardContext.SYMBOL_PANEL, uiState.isAsciiMode
+                    ) ?: uiState.isAsciiMode,
                     keyBackgroundColor = keyBgColor,
                     keyTextColor = keyTextColor,
                     specialKeyBackgroundColor = specialKeyBgColor,

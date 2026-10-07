@@ -65,8 +65,12 @@ fun SymbolKeyboardLayout(
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val scope = rememberCoroutineScope()
 
+    // 默认停留在“英”分类（ASCII 半角符号）。中文模式下直接点 @ # $ 等符号
+    // 也输出半角，避免全角/变体符号（如 ﹫）在其他 App 中无法被正确识别。
+    // 需要中文标点时用户可手动切到“中”分类。
+    val defaultSymbolPage = categories.indexOfFirst { it.id == "englishSymbols" }.coerceAtLeast(0)
     val pagerState = rememberPagerState(
-        initialPage = 0,
+        initialPage = defaultSymbolPage,
         pageCount = { categories.size }
     )
 
