@@ -487,6 +487,11 @@ class RimeEngine {
             }
             // 维护完成后更新 last_build_time，避免下次启动增量检测误判需重编译
             nativeUpdateLastBuildTime()
+            // 关键：维护会销毁并重建引擎词典，此前活动会话的 translator 已失效
+            // （表现为部署后 processKey 不再产出中文候选，只剩编码字母）。
+            // 按维护前记录的方案重建会话，恢复组词能力。无活动会话时 native 返回 false。
+            val recreated = nativeRecreateSessionAfterMaintenance()
+            Log.i(TAG, "deployIncremental done, sessionRecreated=$recreated")
             return true
         }
     }
@@ -688,6 +693,7 @@ class RimeEngine {
     private external fun nativeSetUserConfigBool(key: String, value: Boolean): Boolean
     private external fun nativeIsModuleRegistered(moduleName: String): Boolean
     private external fun nativeUpdateLastBuildTime()
+    private external fun nativeRecreateSessionAfterMaintenance(): Boolean
     private external fun nativeSetPageSize(schemaId: String, pageSize: Int)
     private external fun nativeDestroy()
     private external fun nativeT9SelectCandidate(pinyin: String, text: String?, textLength: Int): Boolean

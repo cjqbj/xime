@@ -132,12 +132,59 @@ public:
             LOGE("startMaintenance: rime not available");
             return false;
         }
-        LOGI("Starting maintenance (full=%s)...", full ? "true" : "false");
+        // 维护是异步的：投递任务后立即返回，真正的编译在后台线程进行，
+        // 编译过程中 librime 会销毁并重建引擎/词典。此时仍持有活动会话，
+        // 先记录其方案与存在性，供维护结束后 recreateSessionAfterMaintenance
+        // 用同方案重建会话（否则旧 session_id 悬空，processKey 不再产候选）。
+        session_active_before_maintenance_ = (session_id_ != 0);
+        schema_before_maintenance_.clear();
+        if (session_id_) {
+            char schema_buf[256] = {0};
+            if (rime->get_current_schema(session_id_, schema_buf, sizeof(schema_buf))) {
+                schema_before_maintenance_ = schema_buf;
+            }
+        }
+        LOGI("Starting maintenance (full=%s), had_active_session=%d, schema=%s...",
+             full ? "true" : "false",
+             session_active_before_maintenance_ ? 1 : 0,
+             schema_before_maintenance_.c_str());
         Bool result = rime->start_maintenance(full);
         if (!result) {
             LOGE("startMaintenance FAILED: rime->start_maintenance() returned false");
         }
         return result;
+    }
+
+    // 维护（start_maintenance）结束后调用：若维护前存在活动会话，则销毁已被
+    // 维护失效的旧会话，按原方案重建会话，保证 translator 重新加载编译产物。
+    // 必须在 is_maintenance_mode()==false 后调用，否则 create_session 会失败。
+    // 维护前无会话（如冷启动预初始化）时返回 false，交由正常 onStartInput 建会话。
+    bool recreateSessionAfterMaintenance() {
+        if (!rime || !initialized_) return false;
+        if (!session_active_before_maintenance_) return false;
+        if (rime->is_maintenance_mode()) {
+            LOGE("recreateSessionAfterMaintenance: still maintaining, skip");
+            return false;
+        }
+        if (session_id_) {
+            rime->destroy_session(session_id_);
+            session_id_ = 0;
+        }
+        session_id_ = rime->create_session();
+        if (!session_id_) {
+            LOGE("recreateSessionAfterMaintenance: create_session failed");
+            return false;
+        }
+        if (!schema_before_maintenance_.empty()) {
+            Bool sel = rime->select_schema(session_id_, schema_before_maintenance_.c_str());
+            LOGI("post-maintenance session recreated=%lu, restore schema=%s ok=%s",
+                 (unsigned long)session_id_, schema_before_maintenance_.c_str(),
+                 sel ? "true" : "false");
+        } else {
+            LOGI("post-maintenance session recreated=%lu (default schema)",
+                 (unsigned long)session_id_);
+        }
+        return true;
     }
 
     bool createSession() {
@@ -905,6 +952,9 @@ private:
     std::string user_data_dir_;
     std::string shared_data_dir_;
     bool initialized_ = false;
+    // 维护前的会话状态，供 recreateSessionAfterMaintenance 恢复
+    bool session_active_before_maintenance_ = false;
+    std::string schema_before_maintenance_;
 };
 
 extern "C" {
@@ -1873,6 +1923,17 @@ Java_com_kingzcheung_xime_rime_RimeEngine_nativeUpdateLastBuildTime(
     jobject thiz
 ) {
     Rime::Instance().updateLastBuildTime();
+}
+
+// 维护结束后按原方案重建会话（修复实时增量部署后活动会话 translator 失效、
+// 中文候选变为 0 的回归）。返回是否成功重建了会话。
+JNIEXPORT jboolean JNICALL
+Java_com_kingzcheung_xime_rime_RimeEngine_nativeRecreateSessionAfterMaintenance(
+    JNIEnv* env,
+    jobject thiz
+) {
+    bool result = Rime::Instance().recreateSessionAfterMaintenance();
+    return result ? JNI_TRUE : JNI_FALSE;
 }
 
 // 部署单个方案
