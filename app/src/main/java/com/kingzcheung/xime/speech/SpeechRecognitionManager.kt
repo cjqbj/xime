@@ -63,10 +63,14 @@ class SpeechRecognitionManager(private val context: Context) {
 
     // 录音时静音其他应用：持有音频焦点的监听器；非 null 表示本会话已申请焦点
     private var audioFocusListener: AudioManager.OnAudioFocusChangeListener? = null
+    // 录音前的媒体流音量；Int.MIN_VALUE 表示未保存。用于松手后恢复。
+    private var savedMusicVolume = Int.MIN_VALUE
 
     /**
      * 按设置申请音频焦点：暂停/降低抖音、音乐等其他应用播放。
      * 用 TRANSIENT 焦点——多数媒体 App 收到后会暂停播放，松手放弃焦点后由用户自行恢复。
+     * 但部分 App（如抖音）收到失焦后只压低不暂停，仍残留微小音量；
+     * 因此焦点之外再把 STREAM_MUSIC 物理音量压到 0，release 时恢复原值，做到彻底静音。
      */
     @Suppress("DEPRECATION")
     private fun acquireAudioFocusIfNeeded() {
@@ -81,6 +85,11 @@ class SpeechRecognitionManager(private val context: Context) {
         )
         if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             audioFocusListener = listener
+            val cur = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            if (cur > 0 && savedMusicVolume == Int.MIN_VALUE) {
+                savedMusicVolume = cur
+                am.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+            }
             FileLogger.i(TAG, "Audio focus acquired: other apps muted during recording")
         } else {
             FileLogger.w(TAG, "Audio focus request failed: $result")
@@ -91,8 +100,18 @@ class SpeechRecognitionManager(private val context: Context) {
     private fun releaseAudioFocus() {
         val listener = audioFocusListener ?: return
         audioFocusListener = null
-        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
-        am.abandonAudioFocus(listener)
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        // 先恢复物理音量，再放弃焦点，避免对方恢复播放的瞬间仍处于 0 音量造成跳变
+        val saved = savedMusicVolume
+        savedMusicVolume = Int.MIN_VALUE
+        if (am != null && saved != Int.MIN_VALUE) {
+            try {
+                am.setStreamVolume(AudioManager.STREAM_MUSIC, saved, 0)
+            } catch (e: Exception) {
+                FileLogger.w(TAG, "Restore music volume failed: ${e.message}")
+            }
+        }
+        am?.abandonAudioFocus(listener)
         FileLogger.i(TAG, "Audio focus released: other apps unmuted")
     }
 
