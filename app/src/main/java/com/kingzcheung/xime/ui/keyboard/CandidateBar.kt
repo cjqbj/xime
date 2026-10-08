@@ -4,6 +4,7 @@ import com.kingzcheung.xime.service.PredictionManager
 import android.annotation.SuppressLint
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -36,7 +37,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -79,7 +85,9 @@ data class CandidateBarCallbacks(
     val onShowMoreCandidates: (() -> Unit)? = null,
     val onClearAssociation: (() -> Unit)? = null,
     val onInputTextClick: (() -> Unit)? = null,
-    val onAssociationSelect: ((Int) -> Unit)? = null
+    val onAssociationSelect: ((Int) -> Unit)? = null,
+    // 长按用户自定义候选词：word=词条文本，action="delete"|"moveEnd"
+    val onCustomPhraseAction: ((word: String, action: String) -> Unit)? = null
 )
 
 @Composable
@@ -97,6 +105,8 @@ fun CandidateBar(
     voiceSpectrum: FloatArray = FloatArray(16),
     voiceRecognitionState: RecognitionState = RecognitionState.IDLE,
     voicePluginName: String = "",
+    // 当前方案 custom_phrase 中用户自定义词条；命中的候选长按可删除/沉底
+    customPhraseWords: Set<String> = emptySet(),
 ) {
     val configuration = LocalConfiguration.current
     val isLandscape = !isFloatingMode && configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
@@ -117,6 +127,8 @@ fun CandidateBar(
     val candidateTextSize = SettingsPreferences.getCandidateTextSize(context)
 
     val density = LocalDensity.current
+    // 长按自定义候选词弹出操作菜单：null=菜单关闭，否则为被长按的词条文本
+    var longPressedWord by remember { mutableStateOf<String?>(null) }
     val textMeasurer = rememberTextMeasurer()
     val itemPaddingPx = with(density) { 8.dp.toPx() }
     val spacingPx = with(density) { 4.dp.toPx() }
@@ -396,23 +408,53 @@ fun CandidateBar(
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 itemsIndexed(displayCandidates, key = { index, _ -> index }) { index, candidate ->
-                    CandidateItem(
-                        text = candidate,
-                        index = index,
-                        onClick = { callbacks.onCandidateSelect(index) },
-                        textColor = visuals.textColor,
-                        comment = if (showComments) {
-                            when (val s = state) {
-                                is CandidateBarState.ChineseCandidates -> s.comments.getOrElse(index) { "" }
-                                is CandidateBarState.EnglishCandidates -> s.comments.getOrElse(index) { "" }
-                                else -> ""
+                    val isCustom = callbacks.onCustomPhraseAction != null &&
+                        candidate in customPhraseWords
+                    Box {
+                        CandidateItem(
+                            text = candidate,
+                            index = index,
+                            onClick = { callbacks.onCandidateSelect(index) },
+                            textColor = visuals.textColor,
+                            comment = if (showComments) {
+                                when (val s = state) {
+                                    is CandidateBarState.ChineseCandidates -> s.comments.getOrElse(index) { "" }
+                                    is CandidateBarState.EnglishCandidates -> s.comments.getOrElse(index) { "" }
+                                    else -> ""
+                                }
+                            } else "",
+                            isSelected = index == 0,
+                            accentColor = visuals.accentColor,
+                            selectedTextColor = visuals.selectedTextColor,
+                            fontSize = candidateTextSize.sp,
+                            onLongClick = if (isCustom) {
+                                { longPressedWord = candidate }
+                            } else null
+                        )
+                        if (isCustom) {
+                            DropdownMenu(
+                                expanded = longPressedWord == candidate,
+                                onDismissRequest = { longPressedWord = null }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("移到末尾") },
+                                    onClick = {
+                                        val w = candidate
+                                        longPressedWord = null
+                                        callbacks.onCustomPhraseAction?.invoke(w, "moveEnd")
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("删除该词") },
+                                    onClick = {
+                                        val w = candidate
+                                        longPressedWord = null
+                                        callbacks.onCustomPhraseAction?.invoke(w, "delete")
+                                    }
+                                )
                             }
-                        } else "",
-                        isSelected = index == 0,
-                        accentColor = visuals.accentColor,
-                        selectedTextColor = visuals.selectedTextColor,
-                        fontSize = candidateTextSize.sp
-                    )
+                        }
+                    }
                 }
 
                 if (displayAssociation.isNotEmpty()) {
@@ -595,6 +637,7 @@ fun CandidateBar(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CandidateItem(
     text: String,
@@ -606,7 +649,8 @@ fun CandidateItem(
     accentColor: Color = Color(0xFF1A73E8),
     selectedTextColor: Color = Color(0xFF1A73E8),
     @SuppressLint("ModifierParameter") modifier: Modifier = Modifier,
-    fontSize: androidx.compose.ui.unit.TextUnit = 19.sp
+    fontSize: androidx.compose.ui.unit.TextUnit = 19.sp,
+    onLongClick: (() -> Unit)? = null
 ) {
     Row(
         modifier = modifier
@@ -615,7 +659,7 @@ fun CandidateItem(
                 if (isSelected) accentColor.copy(alpha = 0.2f)
                 else Color.Transparent
             )
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 4.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

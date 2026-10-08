@@ -186,6 +186,13 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
                         }
                         if (input.isNotEmpty()) {
                             withContext(Dispatchers.Main) { service.commitText(input) }
+                            // 中文（非 T9、非英文直输）模式下按回车没选候选、把一长串字母原样上屏：
+                            // 自动学习进当前方案 custom_phrase，下次敲该串即出现在候选栏。
+                            // 行为不变（原文照常上屏），学习在后台异步进行。
+                            if (!isT9 && !state.isAsciiMode) {
+                                com.kingzcheung.xime.settings.UserPhraseManager
+                                    .learnRawCommit(service, state.currentSchemaId, input)
+                            }
                         }
                         if (isT9) {
                             // 同步清空，避免异步 postRimeJob 延迟导致后续 backspace 拿到旧状态。

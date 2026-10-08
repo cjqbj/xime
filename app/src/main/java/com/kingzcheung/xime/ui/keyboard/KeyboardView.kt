@@ -44,6 +44,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.kingzcheung.xime.handwriting.HandwritingCandidate
 import com.kingzcheung.xime.keyboard.KeyboardPage
 import com.kingzcheung.xime.rime.RimeEngine
@@ -224,6 +226,19 @@ fun KeyboardView(
         onCardPositioned = onCardPositioned,
     ) {
     Box(modifier = contentModifier) {
+        // 当前方案用户自定义候选词集合（custom_phrase），供候选栏长按删除/沉底判断；
+        // 切换方案或执行过管理操作（revision 增加）后重新从磁盘加载。
+        val customPhraseContext = LocalContext.current
+        var customPhraseRevision by remember { mutableStateOf(0) }
+        var customPhraseWords by remember(state.currentSchemaId) {
+            mutableStateOf(emptySet<String>())
+        }
+        LaunchedEffect(state.currentSchemaId, customPhraseRevision) {
+            customPhraseWords = withContext(Dispatchers.IO) {
+                com.kingzcheung.xime.settings.UserPhraseManager
+                    .loadWords(customPhraseContext, state.currentSchemaId)
+            }
+        }
         // 剪贴板历史搜索态：页面为剪贴板覆盖层且搜索开启时，IME 窗口撑满全屏，
         // 候选栏下方用全部剩余高度展示剪贴板面板（搜索结果），下方保留 QWERTY 键盘，
         // 按键走 RIME 引擎可输中文，上屏文本由服务层重定向写入搜索框。
@@ -361,6 +376,7 @@ fun KeyboardView(
                 voiceSpectrum = voiceSpectrumState.value,
                 voiceRecognitionState = state.voiceRecognitionState,
                 voicePluginName = state.voicePluginName,
+                customPhraseWords = customPhraseWords,
                 toolbarActions = state.toolbarButtons.mapNotNull { id ->
                     val button = ToolbarButton.fromId(id) ?: return@mapNotNull null
                     if (button == ToolbarButton.HANDWRITING_LOOKUP) {
@@ -468,6 +484,11 @@ fun KeyboardView(
                         } else {
                             callbacks.onAssociationSelect?.invoke(index)
                         }
+                    },
+                    onCustomPhraseAction = { word, action ->
+                        // 触发服务层改文件 + 防抖部署；本地稍后重载词条集合（部署生效后候选随之更新）
+                        callbacks.onCustomPhraseAction?.invoke(word, action)
+                        customPhraseRevision++
                     },
                 ),
                 inlineSuggestions = inlineSuggestions,

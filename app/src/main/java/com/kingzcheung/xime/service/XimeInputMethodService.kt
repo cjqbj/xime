@@ -922,8 +922,11 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
                 // 剪贴板搜索态：窗口撑满整屏（键盘+底部导航区以外的空间全部给搜索结果），
                 // 自研键盘完整保留在底部；最小 200dp 兜底横屏等矮屏场景。
                 val clipboardSearchExtra = if (state.clipboardSearchActive) {
+                    // IME 窗口 edge-to-edge 会延伸到状态栏底下，面板内容必须让出状态栏高度，
+                    // 否则顶部 tab/搜索行会被状态栏盖住（floating 模式 effectiveScreenH 已扣过）。
+                    val topInset = if (state.isFloatingMode) 0 else statusBarHeightDp
                     (effectiveScreenH - floatingCardContentHeight -
-                        state.keyboardBottomPaddingDp - activeBottomDp).coerceAtLeast(200)
+                        state.keyboardBottomPaddingDp - activeBottomDp - topInset).coerceAtLeast(200)
                 } else 0
                 val panelExtra = quickSendFormExtra + clipboardSearchExtra
 

@@ -127,6 +127,15 @@ internal fun rememberImeKeyboardCallbacks(
             onClearAssociation = {
                 service.candidateState.value = service.candidateState.value.copy(associationCandidates = emptyList())
             },
+            onCustomPhraseAction = { word, action ->
+                val schemaId = service.uiState.value.currentSchemaId
+                when (action) {
+                    "delete" -> com.kingzcheung.xime.settings.UserPhraseManager
+                        .deleteWord(service, schemaId, word)
+                    "moveEnd" -> com.kingzcheung.xime.settings.UserPhraseManager
+                        .moveToEnd(service, schemaId, word)
+                }
+            },
             onToggleDarkMode = { service.toggleDarkMode() },
             onClipboard = {},
             onClipboardSelect = { text -> service.textCommit.selectClipboardItem(text) },

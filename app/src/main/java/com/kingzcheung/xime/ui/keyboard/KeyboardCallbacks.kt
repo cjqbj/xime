@@ -11,6 +11,8 @@ data class KeyboardCallbacks(
     val onCandidateSelect: (Int) -> Unit,
     val onAssociationSelect: ((Int) -> Unit)? = null,
     val onClearAssociation: (() -> Unit)? = null,
+    // 长按用户自定义候选词的管理动作：word=词条，action="delete"|"moveEnd"
+    val onCustomPhraseAction: ((String, String) -> Unit)? = null,
     val onToggleDarkMode: (() -> Unit)? = null,
     val onClipboard: (() -> Unit)? = null,
     val onClipboardSelect: ((String) -> Unit)? = null,
