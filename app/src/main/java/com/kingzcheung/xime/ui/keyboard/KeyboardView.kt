@@ -345,6 +345,13 @@ fun KeyboardView(
                 )
             }
 
+            // 剪贴板搜索态：面板占满键盘上方全部空间，候选栏放到面板下面紧贴按键区。
+            // 否则候选栏位于 IME 窗口最顶部（搜索框上方、屏幕顶边处），中文候选字看不见。
+            if (showClipboardSearchPanel) {
+                val searchPanelHeightDp = state.clipboardSearchExtraDp.coerceAtLeast(200)
+                clipboardPanel(Modifier.fillMaxWidth().height(searchPanelHeightDp.dp))
+            }
+
             CandidateBar(
                 state = candidateBarState,
                 page = page,
@@ -465,13 +472,6 @@ fun KeyboardView(
                 ),
                 inlineSuggestions = inlineSuggestions,
             )
-
-            // 搜索态面板高度 = IME 窗口全屏加高量（撑满键盘上方全部空间），
-            // 下方 QWERTY 键盘保持原有高度完整保留
-            if (showClipboardSearchPanel) {
-                val searchPanelHeightDp = state.clipboardSearchExtraDp.coerceAtLeast(200)
-                clipboardPanel(Modifier.fillMaxWidth().height(searchPanelHeightDp.dp))
-            }
 
             val isMainKeyboard = page is KeyboardPage.Main || showClipboardSearchPanel
             if (isMainKeyboard) {

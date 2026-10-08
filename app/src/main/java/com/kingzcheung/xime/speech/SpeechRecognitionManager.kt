@@ -6,6 +6,7 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -65,12 +66,19 @@ class SpeechRecognitionManager(private val context: Context) {
     private var audioFocusListener: AudioManager.OnAudioFocusChangeListener? = null
     // 录音前的媒体流音量；Int.MIN_VALUE 表示未保存。用于松手后恢复。
     private var savedMusicVolume = Int.MIN_VALUE
+    // 是否已对媒体流施加 AudioFlinger 层硬静音（ADJUST_MUTE），恢复时必须对称解除
+    private var streamHardMuted = false
 
     /**
-     * 按设置申请音频焦点：暂停/降低抖音、音乐等其他应用播放。
-     * 用 TRANSIENT 焦点——多数媒体 App 收到后会暂停播放，松手放弃焦点后由用户自行恢复。
-     * 但部分 App（如抖音）收到失焦后只压低不暂停，仍残留微小音量；
-     * 因此焦点之外再把 STREAM_MUSIC 物理音量压到 0，release 时恢复原值，做到彻底静音。
+     * 按设置让其他应用在录音期间静音，三重手段叠加：
+     * 1. 软协议 AUDIOFOCUS_GAIN_TRANSIENT：规范 App 收到失焦会自行 pause/duck；
+     *    但 AudioFocus 只是协作式通知，抖音等可能只衰减不暂停，且其 Native
+     *    （OpenSL ES/AAudio）渲染线程与 Java 焦点回调异步、缓冲帧仍在推送，
+     *    单靠它必然残留微小声音。
+     * 2. STREAM_MUSIC 音量置 0：部分 ROM 音量 index=0 仍有非零底噪增益，仅作辅助。
+     * 3. ADJUST_MUTE（API 23+）：在 AudioFlinger 混音输出层对媒体流置 mute flag，
+     *    与第三方 App 是否守协议无关、与其 native 缓冲无关，输出直接乘 0，彻底遮断。
+     * 权限 MODIFY_AUDIO_SETTINGS 为安装期普通权限，Manifest 已声明。
      */
     @Suppress("DEPRECATION")
     private fun acquireAudioFocusIfNeeded() {
@@ -85,12 +93,33 @@ class SpeechRecognitionManager(private val context: Context) {
         )
         if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             audioFocusListener = listener
+
+            // 手段2：保存并归零媒体音量
             val cur = am.getStreamVolume(AudioManager.STREAM_MUSIC)
             if (cur > 0 && savedMusicVolume == Int.MIN_VALUE) {
                 savedMusicVolume = cur
-                am.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+                try {
+                    am.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+                } catch (e: SecurityException) {
+                    FileLogger.w(TAG, "Set music volume 0 failed: ${e.message}")
+                }
             }
-            FileLogger.i(TAG, "Audio focus acquired: other apps muted during recording")
+
+            // 手段3：AudioFlinger 层硬静音，彻底遮断（含 native 缓冲帧）
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !streamHardMuted) {
+                try {
+                    am.adjustStreamVolume(
+                        AudioManager.STREAM_MUSIC,
+                        AudioManager.ADJUST_MUTE,
+                        0
+                    )
+                    streamHardMuted = true
+                } catch (e: Exception) {
+                    FileLogger.w(TAG, "ADJUST_MUTE failed: ${e.message}")
+                }
+            }
+
+            FileLogger.i(TAG, "Audio focus acquired: other apps hard-muted during recording")
         } else {
             FileLogger.w(TAG, "Audio focus request failed: $result")
         }
@@ -101,7 +130,9 @@ class SpeechRecognitionManager(private val context: Context) {
         val listener = audioFocusListener ?: return
         audioFocusListener = null
         val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        // 先恢复物理音量，再放弃焦点，避免对方恢复播放的瞬间仍处于 0 音量造成跳变
+
+        // 恢复顺序：先恢复音量值，再解除硬静音——unmute 生效瞬间音量已是原值，无跳变；
+        // 最后放弃焦点，让对方 App 自行恢复播放。
         val saved = savedMusicVolume
         savedMusicVolume = Int.MIN_VALUE
         if (am != null && saved != Int.MIN_VALUE) {
@@ -109,6 +140,18 @@ class SpeechRecognitionManager(private val context: Context) {
                 am.setStreamVolume(AudioManager.STREAM_MUSIC, saved, 0)
             } catch (e: Exception) {
                 FileLogger.w(TAG, "Restore music volume failed: ${e.message}")
+            }
+        }
+        if (am != null && streamHardMuted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            streamHardMuted = false
+            try {
+                am.adjustStreamVolume(
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.ADJUST_UNMUTE,
+                    0
+                )
+            } catch (e: Exception) {
+                FileLogger.w(TAG, "ADJUST_UNMUTE failed: ${e.message}")
             }
         }
         am?.abandonAudioFocus(listener)
