@@ -38,6 +38,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -227,9 +229,11 @@ fun KeyboardView(
     ) {
     Box(modifier = contentModifier) {
         // 当前方案用户自定义候选词集合（custom_phrase），供候选栏长按删除/沉底判断；
-        // 切换方案或执行过管理操作（revision 增加）后重新从磁盘加载。
+        // 切换方案，或自动学习 / 删除 / 沉底写盘后（UserPhraseManager.phraseRevision
+        // 递增）重新从磁盘加载。
         val customPhraseContext = LocalContext.current
-        var customPhraseRevision by remember { mutableStateOf(0) }
+        val customPhraseRevision =
+            com.kingzcheung.xime.settings.UserPhraseManager.phraseRevision.longValue
         var customPhraseWords by remember(state.currentSchemaId) {
             mutableStateOf(emptySet<String>())
         }
@@ -367,6 +371,16 @@ fun KeyboardView(
                 clipboardPanel(Modifier.fillMaxWidth().height(searchPanelHeightDp.dp))
             }
 
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { coords ->
+                        // 键盘区（候选栏+按键）顶部绝对位置：搜索面板在其上方展开时此位置
+                        // 不变，上报给服务层作为稳定的 contentTopInsets，防止宿主被重排。
+                        callbacks.onKeyboardTopPositioned
+                            ?.invoke(coords.positionInWindow().y.toInt())
+                    }
+            ) {
             CandidateBar(
                 state = candidateBarState,
                 page = page,
@@ -486,13 +500,14 @@ fun KeyboardView(
                         }
                     },
                     onCustomPhraseAction = { word, action ->
-                        // 触发服务层改文件 + 防抖部署；本地稍后重载词条集合（部署生效后候选随之更新）
+                        // 服务层写文件；UserPhraseManager 写盘成功后递增 phraseRevision，
+                        // 本组件观察到变化会自动重新加载词条集合，无需在此手动刷新。
                         callbacks.onCustomPhraseAction?.invoke(word, action)
-                        customPhraseRevision++
                     },
                 ),
                 inlineSuggestions = inlineSuggestions,
             )
+            }
 
             val isMainKeyboard = page is KeyboardPage.Main || showClipboardSearchPanel
             if (isMainKeyboard) {

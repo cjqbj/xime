@@ -496,6 +496,41 @@ class RimeEngine {
         }
     }
 
+    /**
+     * 重新加载 stabledb 形态的纯文本用户词（custom_phrase.txt）。
+     *
+     * custom_phrase translator 配置为 db_class=stabledb：词条以纯文本直读，build 目录
+     * 不产生编译产物，因此 start_maintenance(false) 会因"没有编译任务"正常返回 false。
+     * 这类变更无需部署，只需销毁并重建当前会话，让新 translator 重新打开
+     * custom_phrase.txt，新学 / 删除 / 沉底的词即刻生效。
+     *
+     * 不能复用 [deployIncremental]：后者在 start_maintenance 返回 false 时直接返回
+     * false，而 RimeConfigHelper.ensureDeployment 依赖该语义回退到全量部署。
+     */
+    fun reloadStableUserDict(): Boolean {
+        if (!isInitialized) return false
+        locked {
+            // startMaintenance 会在调用底层前先记录活动会话与其方案（即使底层返回
+            // false 也已记录），供随后 recreateSessionAfterMaintenance 恢复同方案。
+            val started = nativeStartMaintenance(false)
+            if (started) {
+                var waited = 0L
+                while (nativeIsMaintaining() && waited < 180_000L) {
+                    Thread.sleep(100)
+                    waited += 100
+                }
+                if (nativeIsMaintaining()) {
+                    Log.w(TAG, "reloadStableUserDict: maintenance timed out")
+                    return false
+                }
+                nativeUpdateLastBuildTime()
+            }
+            val recreated = nativeRecreateSessionAfterMaintenance()
+            Log.i(TAG, "reloadStableUserDict done, maintenanceStarted=$started, sessionRecreated=$recreated")
+            return recreated
+        }
+    }
+
     fun lookupText(text: String): String {
         if (!isInitialized || text.isEmpty()) return ""
         return tryLocked("") {

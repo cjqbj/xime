@@ -164,6 +164,7 @@ internal fun rememberImeKeyboardCallbacks(
             onClipboardSearchQueryChange = { query ->
                 service.uiState.value = service.uiState.value.copy(clipboardSearchQuery = query)
             },
+            onKeyboardTopPositioned = { top -> service.stableKeyboardTopPx = top },
             onCommitText = { text -> service.textCommit.commitClipboardText(text) },
             onDeleteText = { count -> service.textCommit.deleteClipboardChars(count) },
             onQuickSend = {},

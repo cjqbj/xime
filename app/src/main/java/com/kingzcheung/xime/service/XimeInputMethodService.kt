@@ -241,6 +241,8 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
     internal var previousSchemaId: String = ""
     /** 键盘内容 Box 顶部在窗口中的 y 坐标（px），由 onGloballyPositioned 实测更新 */
     private var keyboardContentTopPx: Int = -1
+    // 键盘区（候选栏+按键）实测顶部（px），不含搜索面板；搜索态保持稳定，供 onComputeInsets 上报。
+    internal var stableKeyboardTopPx: Int = -1
     
     internal val calculatorEngine = com.kingzcheung.xime.calculator.CalculatorEngine()
 
@@ -1813,12 +1815,24 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
             }
         } else {
             // 非浮动模式：窗口全屏，键盘内容贴底。
-            // contentTopInsets 直接使用 Compose 实测的键盘内容顶部位置（px），
-            // 避免 window 全屏后 super 误判键盘占满全屏导致布局下沉。
-            if (keyboardContentTopPx > 0) {
-                outInsets.contentTopInsets = keyboardContentTopPx
-                outInsets.visibleTopInsets = keyboardContentTopPx
-                outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_VISIBLE
+            // contentTopInsets 使用“键盘区”实测顶部（不含搜索面板）：搜索面板在键盘上方
+            // 展开时该值保持不变，宿主窗口不会被压缩/重排（修复 termux 全屏下闪屏）。
+            val top = if (stableKeyboardTopPx > 0) stableKeyboardTopPx else keyboardContentTopPx
+            if (top > 0) {
+                outInsets.contentTopInsets = top
+                outInsets.visibleTopInsets = top
+                if (state.clipboardSearchActive) {
+                    // 搜索面板覆盖在键盘上方：内容顶部仍按键盘顶部上报以免重排宿主，
+                    // 但需让搜索面板区域也可触摸，否则该区域触摸会穿透到宿主。
+                    outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
+                    outInsets.touchableRegion.set(
+                        0, 0,
+                        resources.displayMetrics.widthPixels,
+                        resources.displayMetrics.heightPixels
+                    )
+                } else {
+                    outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_VISIBLE
+                }
             } else {
                 super.onComputeInsets(outInsets)
             }

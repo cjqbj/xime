@@ -95,4 +95,10 @@ data class KeyboardCallbacks(
      * 服务层负责上屏首位候选词或待确认英文，再由键盘层切换布局。
      */
     val onCommitCandidateBeforeModeChange: (() -> Unit)? = null,
+    /**
+     * 上报键盘区（候选栏+按键）顶部在 IME 窗口中的 y（px）。
+     * 搜索面板在键盘上方展开时该绝对位置保持不变，供 onComputeInsets 上报稳定的
+     * contentTopInsets，避免系统压缩/重排宿主窗口（termux 全屏下闪屏根因）。
+     */
+    val onKeyboardTopPositioned: ((Int) -> Unit)? = null,
 )
