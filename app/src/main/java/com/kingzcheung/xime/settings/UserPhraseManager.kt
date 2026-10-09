@@ -34,16 +34,26 @@ object UserPhraseManager {
     /** 沉底权重：table_translator 按 weight 排序，统一极小负值即可稳定排到同码末尾。 */
     private const val BOTTOM_WEIGHT = -100000
     private const val DEPLOY_DEBOUNCE_MS = 2000L
-    /** 每次输入最多注入候选栏的自动词数量。 */
+    /** 每段（前置/沉底）最多注入候选栏的自动词数量。 */
     private const val MAX_INJECT_COUNT = 8
+    /** 沉底分值：低于此分（负分）的词注入到 rime 候选之后；沉底动作直接置为此值。 */
+    private const val DEMOTED_SCORE = -5L
+    /** 每点击上屏一次自动词，其分值加一，逐渐提升排序，沉底词连选 |DEMOTED_SCORE| 次重回前排。 */
+    private const val SELECT_BUMP = 1L
 
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val fileMutex = Mutex()
     @Volatile private var deployScheduled = false
 
     // ── 自动学习词：内存直管，独立存储，不经过 rime 会话 ──
-    /** schemaId -> 有序词条；所有读写在 object 监视器内同步。 */
-    private val autoCache = HashMap<String, List<String>>()
+    /** 自动词条目：word + 分值。分值 >=0 的词前缀匹配时前置注入；负分词追加到 rime 候选之后。 */
+    private data class AutoEntry(val word: String, val score: Long)
+
+    /** 前缀匹配结果：[front] 为正常词（置候选栏前部），[tail] 为沉底词（置 rime 候选之后）。 */
+    class AutoMatch(val front: List<String>, val tail: List<String>)
+
+    /** schemaId -> 词条（始终按分值降序、同分稳定保序）；所有读写在 object 监视器内同步。 */
+    private val autoCache = HashMap<String, List<AutoEntry>>()
     private val autoSaveMutex = Mutex()
 
     /**
@@ -125,70 +135,113 @@ object UserPhraseManager {
 
     // ── 自动学习词内存操作（即时，不碰 rime 会话/全局锁）──
 
-    /** 读取当前方案的自动学习词（有序），首次访问从磁盘载入内存。 */
+    /** 解析一行磁盘记录：兼容新格式 `word<TAB>score` 与旧格式（裸词按 0 分）。 */
+    private fun parseAutoEntry(line: String): AutoEntry {
+        val tab = line.lastIndexOf('\t')
+        if (tab > 0) {
+            line.substring(tab + 1).toLongOrNull()?.let { return AutoEntry(line.substring(0, tab), it) }
+        }
+        return AutoEntry(line, 0L)
+    }
+
+    /** 按分值降序重排（稳定排序，同分保持既有先后）。 */
+    private fun List<AutoEntry>.resorted(): List<AutoEntry> = sortedByDescending { it.score }
+
+    /** 读取当前方案的自动词条目（分值降序），首次访问从磁盘载入内存。 */
     @Synchronized
-    fun getAutoPhrases(context: Context, schemaId: String): List<String> {
+    private fun getEntries(context: Context, schemaId: String): List<AutoEntry> {
         if (schemaId.isBlank()) return emptyList()
         autoCache[schemaId]?.let { return it }
         val loaded = PersonalDictManager.loadAutoPhrases(context.applicationContext, schemaId)
+            .map { parseAutoEntry(it) }
+            .resorted()
         autoCache[schemaId] = loaded
         return loaded
     }
 
-    /** 新增自动词：已存在则不重复；内存立即更新并异步落盘。 */
+    /** 读取当前方案的自动学习词（分值降序），首次访问从磁盘载入内存。 */
+    @Synchronized
+    fun getAutoPhrases(context: Context, schemaId: String): List<String> {
+        if (schemaId.isBlank()) return emptyList()
+        return getEntries(context, schemaId).map { it.word }
+    }
+
+    /** 新增自动词：已存在则不重复；新词取当前最高分 +1（立即排到最前），内存更新并异步落盘。 */
     @Synchronized
     fun addAutoPhrase(context: Context, schemaId: String, word: String) {
-        val cur = getAutoPhrases(context, schemaId)
-        if (cur.any { it == word }) return
-        autoCache[schemaId] = cur + word
+        val cur = getEntries(context, schemaId)
+        if (cur.any { it.word == word }) return
+        val topScore = (cur.maxOfOrNull { it.score } ?: 0L).coerceAtLeast(0L) + 1L
+        autoCache[schemaId] = (cur + AutoEntry(word, topScore)).resorted()
         bumpPhraseRevision()
         persistAutoAsync(context, schemaId)
-        FileLogger.i(TAG, "learned auto phrase: $word (schema=$schemaId)")
+        FileLogger.i(TAG, "learned auto phrase: $word score=$topScore (schema=$schemaId)")
     }
 
     /** 删除自动词：内存立即移除并异步落盘。 */
     @Synchronized
     fun deleteAutoWord(context: Context, schemaId: String, word: String) {
-        val cur = getAutoPhrases(context, schemaId)
-        if (cur.none { it == word }) return
-        autoCache[schemaId] = cur.filterNot { it == word }
+        val cur = getEntries(context, schemaId)
+        if (cur.none { it.word == word }) return
+        autoCache[schemaId] = cur.filterNot { it.word == word }
         bumpPhraseRevision()
         persistAutoAsync(context, schemaId)
     }
 
-    /** 把自动词移动到有序列表末尾（真正改变顺序，候选栏即沉底）。 */
+    /**
+     * 沉底自动词：分值置为 [DEMOTED_SCORE]（负分），候选栏立即把它追加到 rime 候选之后。
+     * 以后点击该词每次加 [SELECT_BUMP]，分值回到 0 即重新前置注入（多次使用逐步提升）。
+     */
     @Synchronized
     fun moveAutoWordToEnd(context: Context, schemaId: String, word: String) {
-        val cur = getAutoPhrases(context, schemaId)
-        val idx = cur.indexOf(word)
-        if (idx < 0 || idx == cur.lastIndex) return
-        val next = cur.toMutableList().apply { removeAt(idx); add(word) }
+        val cur = getEntries(context, schemaId)
+        val idx = cur.indexOfFirst { it.word == word }
+        if (idx < 0 || cur[idx].score == DEMOTED_SCORE) return
+        val next = cur.toMutableList().also { it[idx] = AutoEntry(word, DEMOTED_SCORE) }.resorted()
         autoCache[schemaId] = next
         bumpPhraseRevision()
+        persistAutoAsync(context, schemaId)
+    }
+
+    /** 点击上屏自动词后调用：分值 +[SELECT_BUMP] 并重排（落盘异步），使常用词逐步靠前。 */
+    @Synchronized
+    fun bumpAutoWordOnPick(context: Context, schemaId: String, word: String) {
+        val cur = getEntries(context, schemaId)
+        val idx = cur.indexOfFirst { it.word == word }
+        if (idx < 0) return
+        val next = cur.toMutableList().also { it[idx] = AutoEntry(word, it[idx].score + SELECT_BUMP) }.resorted()
+        autoCache[schemaId] = next
         persistAutoAsync(context, schemaId)
     }
 
     /** 判断某词是否为自动学习词（供长按动作路由）。 */
     @Synchronized
     fun isAutoWord(context: Context, schemaId: String, word: String): Boolean =
-        getAutoPhrases(context, schemaId).any { it == word }
+        getEntries(context, schemaId).any { it.word == word }
 
-    /** 前缀匹配：返回自动词中以当前输入（小写）开头的词，按既有顺序。 */
-    fun matchAutoPhrases(context: Context, schemaId: String, input: String): List<String> {
+    /**
+     * 前缀匹配：
+     * - front：分值 >= 0 的词，按分值降序，注入候选栏前部；
+     * - tail：负分（沉底）词，按分值升序（最沉的排最后），追加到 rime 候选之后。
+     */
+    @Synchronized
+    fun matchAutoPhrases(context: Context, schemaId: String, input: String): AutoMatch {
         val key = input.trim().lowercase()
-        if (key.isEmpty()) return emptyList()
-        return getAutoPhrases(context, schemaId)
-            .filter { it.lowercase().startsWith(key) }
-            .take(MAX_INJECT_COUNT)
+        if (key.isEmpty()) return AutoMatch(emptyList(), emptyList())
+        val matched = getEntries(context, schemaId).filter { it.word.lowercase().startsWith(key) }
+        val front = matched.filter { it.score >= 0L }.take(MAX_INJECT_COUNT).map { it.word }
+        // 缓存按降序存储，负分段反转即得升序（-1 在前、DEMOTED_SCORE 在最后）。
+        val tail = matched.filter { it.score < 0L }.asReversed().take(MAX_INJECT_COUNT).map { it.word }
+        return AutoMatch(front, tail)
     }
 
-    /** 异步落盘：锁内保存内存中的最新快照，保证快速连续修改后最终一致。 */
+    /** 异步落盘：锁内保存内存中的最新快照（word<TAB>score 每行），保证快速连续修改后最终一致。 */
     private fun persistAutoAsync(context: Context, schemaId: String) {
         val app = context.applicationContext
         ioScope.launch {
             autoSaveMutex.withLock {
                 val snapshot = synchronized(this@UserPhraseManager) {
-                    autoCache[schemaId].orEmpty()
+                    autoCache[schemaId].orEmpty().map { "${it.word}\t${it.score}" }
                 }
                 PersonalDictManager.saveAutoPhrases(app, schemaId, snapshot)
             }

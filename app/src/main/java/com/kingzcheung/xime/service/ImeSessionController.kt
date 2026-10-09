@@ -22,30 +22,41 @@ import kotlinx.coroutines.withContext
 internal class ImeSessionController(private val service: XimeInputMethodService) {
 
     /**
-     * 把自动学习词（前缀匹配）注入到主候选前部。
-     * 仅在非 ascii、非 T9、且有字母编码时生效；返回 (最终候选, 最终注释, 注入数量)。
+     * 把自动学习词（前缀匹配）合并进候选：
+     * - 正常词（分值 >=0）前置；沉底词（负分）追加到 rime 候选之后；
+     * - 仅在非 ascii、非 T9、且有字母编码时生效。
      * 注释/候选不假定等长，按索引过滤以避免丢词。
      */
+    private data class MergedResult(
+        val candidates: List<String>,
+        val comments: List<String>,
+        val frontCount: Int,
+        val tailCount: Int,
+    )
+
     private fun mergeAutoCandidates(
         input: String,
         isAsciiMode: Boolean,
         isT9: Boolean,
         rimeCandidates: List<String>,
         rimeComments: List<String>,
-    ): Triple<List<String>, List<String>, Int> {
+    ): MergedResult {
         if (isAsciiMode || isT9 || input.isEmpty()) {
-            return Triple(rimeCandidates, rimeComments, 0)
+            return MergedResult(rimeCandidates, rimeComments, 0, 0)
         }
         val schemaId = service.uiState.value.currentSchemaId
-        val matches = UserPhraseManager.matchAutoPhrases(service, schemaId, input)
-        if (matches.isEmpty()) return Triple(rimeCandidates, rimeComments, 0)
-        val matchSet = matches.toHashSet()
-        val keptIndices = rimeCandidates.indices.filterNot { rimeCandidates[it] in matchSet }
+        val match = UserPhraseManager.matchAutoPhrases(service, schemaId, input)
+        if (match.front.isEmpty() && match.tail.isEmpty()) {
+            return MergedResult(rimeCandidates, rimeComments, 0, 0)
+        }
+        val removeSet = (match.front + match.tail).toHashSet()
+        val keptIndices = rimeCandidates.indices.filterNot { rimeCandidates[it] in removeSet }
         val keptTexts = keptIndices.map { rimeCandidates[it] }
         val keptComments = keptIndices.map { rimeComments.getOrElse(it) { "" } }
-        val outCandidates = matches + keptTexts
-        val outComments = List(matches.size) { "" } + keptComments
-        return Triple(outCandidates, outComments, matches.size)
+        val outCandidates = match.front + keptTexts + match.tail
+        val outComments =
+            List(match.front.size) { "" } + keptComments + List(match.tail.size) { "" }
+        return MergedResult(outCandidates, outComments, match.front.size, match.tail.size)
     }
 
     internal fun applyComposition(composition: com.kingzcheung.xime.rime.RimeComposition) {
@@ -102,21 +113,22 @@ internal class ImeSessionController(private val service: XimeInputMethodService)
             service.dismissInlineSuggestions()
         }
 
-        val (finalCandidates, finalComments, customCount) = mergeAutoCandidates(
+        val merged = mergeAutoCandidates(
             displayText, isAsciiMode, isT9Schema, displayCandidates, displayComments
         )
 
         service.candidateState.value = service.candidateState.value.copy(
             inputText = displayText,
             preeditText = displayText,
-            candidates = finalCandidates,
-            candidateComments = finalComments,
+            candidates = merged.candidates,
+            candidateComments = merged.comments,
             isComposing = isComposing,
             associationCandidates = if ((isAsciiMode || !service.isChineseMode) && pendingEnglish.isEmpty()) emptyList() else service.candidateState.value.associationCandidates,
             isShowingRecentClipboard = false,
             hasNextPage = hasNextPage,
             hasPrevPage = hasPrevPage,
-            customPhraseCount = customCount
+            customPhraseCount = merged.frontCount,
+            demotedPhraseCount = merged.tailCount
         )
         if (isAsciiMode != service.uiState.value.isAsciiMode) {
             FileLogger.i(XimeInputMethodService.TAG, "applyComposition: ascii ${service.uiState.value.isAsciiMode}->$isAsciiMode")
@@ -209,21 +221,22 @@ internal class ImeSessionController(private val service: XimeInputMethodService)
             service.dismissInlineSuggestions()
         }
 
-        val (finalCandidates, finalComments, customCount) = mergeAutoCandidates(
+        val merged = mergeAutoCandidates(
             displayText, isAsciiMode, isT9Schema, displayCandidates, displayComments
         )
 
         service.candidateState.value = service.candidateState.value.copy(
             inputText = displayText,
             preeditText = displayText,
-            candidates = finalCandidates,
-            candidateComments = finalComments,
+            candidates = merged.candidates,
+            candidateComments = merged.comments,
             isComposing = isComposing,
             associationCandidates = if ((isAsciiMode || !service.isChineseMode) && pendingEnglish.isEmpty()) emptyList() else service.candidateState.value.associationCandidates,
             isShowingRecentClipboard = false,
             hasNextPage = result.hasNextPage,
             hasPrevPage = result.hasPrevPage,
-            customPhraseCount = customCount
+            customPhraseCount = merged.frontCount,
+            demotedPhraseCount = merged.tailCount
         )
         service.uiState.value = service.uiState.value.copy(isAsciiMode = isAsciiMode)
         

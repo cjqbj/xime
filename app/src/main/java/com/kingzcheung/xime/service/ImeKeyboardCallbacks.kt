@@ -134,11 +134,21 @@ internal fun rememberImeKeyboardCallbacks(
                 val isAuto = mgr.isAutoWord(service, schemaId, word)
                 when (action) {
                     "delete" ->
-                        if (isAuto) mgr.deleteAutoWord(service, schemaId, word)
-                        else mgr.deleteWord(service, schemaId, word)
+                        if (isAuto) {
+                            mgr.deleteAutoWord(service, schemaId, word)
+                            // 立即按当前编码重合并候选：被删词当场消失。
+                            service.updateUI()
+                        } else {
+                            mgr.deleteWord(service, schemaId, word)
+                        }
                     "moveEnd" ->
-                        if (isAuto) mgr.moveAutoWordToEnd(service, schemaId, word)
-                        else mgr.moveToEnd(service, schemaId, word)
+                        if (isAuto) {
+                            mgr.moveAutoWordToEnd(service, schemaId, word)
+                            // 立即重合并：该词当场移到 rime 候选之后（列表末尾）。
+                            service.updateUI()
+                        } else {
+                            mgr.moveToEnd(service, schemaId, word)
+                        }
                 }
             },
             onToggleDarkMode = { service.toggleDarkMode() },

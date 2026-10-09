@@ -377,7 +377,10 @@ object PersonalDictManager {
         return File(File(context.filesDir, AUTO_PHRASE_DIR), "$safe.txt")
     }
 
-    /** 读取当前方案的自动学习词（按文件行序，空行忽略）。 */
+    /**
+     * 读取当前方案的自动学习词原始行（空行忽略）。
+     * 行格式为 `word<TAB>score`（分值），兼容旧版裸词行（由 UserPhraseManager 解析为 0 分）。
+     */
     fun loadAutoPhrases(context: Context, schemaId: String): List<String> {
         if (schemaId.isBlank()) return emptyList()
         val file = autoPhraseFile(context.applicationContext, schemaId)
@@ -392,7 +395,7 @@ object PersonalDictManager {
         }
     }
 
-    /** 覆盖保存自动学习词（保持传入顺序）。 */
+    /** 覆盖保存自动学习词（每行一条已格式化的记录，保持传入顺序）。 */
     fun saveAutoPhrases(context: Context, schemaId: String, phrases: List<String>) {
         val file = autoPhraseFile(context.applicationContext, schemaId)
         file.parentFile?.mkdirs()

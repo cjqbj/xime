@@ -774,11 +774,21 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
 
         val isT9 = isT9Schema(service.uiState.value.currentSchemaId)
 
-        val customCount = service.candidateState.value.customPhraseCount
-        if (!isT9 && customCount > 0 && index in 0 until customCount) {
-            // 点击的是 app 层注入的自动学习词：直接上屏，不经过 rime 选词，也不重建会话。
-            val word = service.candidateState.value.candidates.getOrElse(index) { "" }
+        val candState = service.candidateState.value
+        val frontCount = candState.customPhraseCount
+        val tailCount = candState.demotedPhraseCount
+        val totalCount = candState.candidates.size
+        val isFrontInject = !isT9 && frontCount > 0 && index in 0 until frontCount
+        val tailStart = totalCount - tailCount
+        val isTailInject = !isT9 && tailCount > 0 && index in tailStart until totalCount
+        if (isFrontInject || isTailInject) {
+            // 点击的是 app 层注入的自动学习词（前置或沉底）：直接上屏，不经过 rime 选词，也不重建会话。
+            val word = candState.candidates.getOrElse(index) { "" }
             if (word.isNotEmpty()) {
+                // 记一次使用：分值 +1，沉底词被连选多次后可逐步回升到前排。
+                com.kingzcheung.xime.settings.UserPhraseManager.bumpAutoWordOnPick(
+                    service, service.uiState.value.currentSchemaId, word
+                )
                 withContext(Dispatchers.Main) { service.commitText(word) }
             }
             service.rimeEngine.clearComposition()
@@ -811,7 +821,7 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
         val selectRimeOk = if (isT9) {
             true
         } else {
-            val baseIndex = (index - customCount).coerceAtLeast(0)
+            val baseIndex = (index - frontCount).coerceAtLeast(0)
             val rimeIndex = if (selectedCandidate != null) {
                 resolveRimeCandidateIndex(baseIndex, selectedCandidate, service.rimeEngine.getCandidates().toList())
             } else {
