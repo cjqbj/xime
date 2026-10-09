@@ -773,6 +773,22 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
         } else null
 
         val isT9 = isT9Schema(service.uiState.value.currentSchemaId)
+
+        val customCount = service.candidateState.value.customPhraseCount
+        if (!isT9 && customCount > 0 && index in 0 until customCount) {
+            // 点击的是 app 层注入的自动学习词：直接上屏，不经过 rime 选词，也不重建会话。
+            val word = service.candidateState.value.candidates.getOrElse(index) { "" }
+            if (word.isNotEmpty()) {
+                withContext(Dispatchers.Main) { service.commitText(word) }
+            }
+            service.rimeEngine.clearComposition()
+            withContext(Dispatchers.Main) {
+                service.candidateState.value = CandidateState()
+                service.endComposingInputBox()
+            }
+            return
+        }
+
         val candidatePinyin = if (isT9 && index < service.candidateState.value.candidateComments.size) {
             service.candidateState.value.candidateComments[index]
         } else null
@@ -795,10 +811,11 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
         val selectRimeOk = if (isT9) {
             true
         } else {
+            val baseIndex = (index - customCount).coerceAtLeast(0)
             val rimeIndex = if (selectedCandidate != null) {
-                resolveRimeCandidateIndex(index, selectedCandidate, service.rimeEngine.getCandidates().toList())
+                resolveRimeCandidateIndex(baseIndex, selectedCandidate, service.rimeEngine.getCandidates().toList())
             } else {
-                index
+                baseIndex
             }
             service.rimeEngine.selectCandidate(rimeIndex)
         }

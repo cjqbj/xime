@@ -128,12 +128,17 @@ internal fun rememberImeKeyboardCallbacks(
                 service.candidateState.value = service.candidateState.value.copy(associationCandidates = emptyList())
             },
             onCustomPhraseAction = { word, action ->
+                val mgr = com.kingzcheung.xime.settings.UserPhraseManager
                 val schemaId = service.uiState.value.currentSchemaId
+                // 自动学习词走内存直管（即时、不重建会话）；手动 custom_phrase 走原有重建链路。
+                val isAuto = mgr.isAutoWord(service, schemaId, word)
                 when (action) {
-                    "delete" -> com.kingzcheung.xime.settings.UserPhraseManager
-                        .deleteWord(service, schemaId, word)
-                    "moveEnd" -> com.kingzcheung.xime.settings.UserPhraseManager
-                        .moveToEnd(service, schemaId, word)
+                    "delete" ->
+                        if (isAuto) mgr.deleteAutoWord(service, schemaId, word)
+                        else mgr.deleteWord(service, schemaId, word)
+                    "moveEnd" ->
+                        if (isAuto) mgr.moveAutoWordToEnd(service, schemaId, word)
+                        else mgr.moveToEnd(service, schemaId, word)
                 }
             },
             onToggleDarkMode = { service.toggleDarkMode() },

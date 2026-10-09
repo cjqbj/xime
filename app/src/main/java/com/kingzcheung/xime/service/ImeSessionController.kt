@@ -6,6 +6,7 @@ import com.kingzcheung.xime.rime.T9InputController
 import com.kingzcheung.xime.rime.buildT9DisplayState
 import com.kingzcheung.xime.settings.SchemaManager
 import com.kingzcheung.xime.settings.SettingsPreferences
+import com.kingzcheung.xime.settings.UserPhraseManager
 import com.kingzcheung.xime.ui.keyboard.isT9Schema
 import com.kingzcheung.xime.util.FileLogger
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +20,34 @@ import kotlinx.coroutines.withContext
  * 方案名称/开关刷新与切换、T9 切离提交等逻辑。共享状态通过 service 引用访问。
  */
 internal class ImeSessionController(private val service: XimeInputMethodService) {
+
+    /**
+     * 把自动学习词（前缀匹配）注入到主候选前部。
+     * 仅在非 ascii、非 T9、且有字母编码时生效；返回 (最终候选, 最终注释, 注入数量)。
+     * 注释/候选不假定等长，按索引过滤以避免丢词。
+     */
+    private fun mergeAutoCandidates(
+        input: String,
+        isAsciiMode: Boolean,
+        isT9: Boolean,
+        rimeCandidates: List<String>,
+        rimeComments: List<String>,
+    ): Triple<List<String>, List<String>, Int> {
+        if (isAsciiMode || isT9 || input.isEmpty()) {
+            return Triple(rimeCandidates, rimeComments, 0)
+        }
+        val schemaId = service.uiState.value.currentSchemaId
+        val matches = UserPhraseManager.matchAutoPhrases(service, schemaId, input)
+        if (matches.isEmpty()) return Triple(rimeCandidates, rimeComments, 0)
+        val matchSet = matches.toHashSet()
+        val keptIndices = rimeCandidates.indices.filterNot { rimeCandidates[it] in matchSet }
+        val keptTexts = keptIndices.map { rimeCandidates[it] }
+        val keptComments = keptIndices.map { rimeComments.getOrElse(it) { "" } }
+        val outCandidates = matches + keptTexts
+        val outComments = List(matches.size) { "" } + keptComments
+        return Triple(outCandidates, outComments, matches.size)
+    }
+
     internal fun applyComposition(composition: com.kingzcheung.xime.rime.RimeComposition) {
         val inputText = composition.input
         val codeInInputBox = SettingsPreferences.getInputTextLocation(service) == SettingsPreferences.INPUT_TEXT_INPUT_BOX
@@ -73,16 +102,21 @@ internal class ImeSessionController(private val service: XimeInputMethodService)
             service.dismissInlineSuggestions()
         }
 
+        val (finalCandidates, finalComments, customCount) = mergeAutoCandidates(
+            displayText, isAsciiMode, isT9Schema, displayCandidates, displayComments
+        )
+
         service.candidateState.value = service.candidateState.value.copy(
             inputText = displayText,
             preeditText = displayText,
-            candidates = displayCandidates,
-            candidateComments = displayComments,
+            candidates = finalCandidates,
+            candidateComments = finalComments,
             isComposing = isComposing,
             associationCandidates = if ((isAsciiMode || !service.isChineseMode) && pendingEnglish.isEmpty()) emptyList() else service.candidateState.value.associationCandidates,
             isShowingRecentClipboard = false,
             hasNextPage = hasNextPage,
-            hasPrevPage = hasPrevPage
+            hasPrevPage = hasPrevPage,
+            customPhraseCount = customCount
         )
         if (isAsciiMode != service.uiState.value.isAsciiMode) {
             FileLogger.i(XimeInputMethodService.TAG, "applyComposition: ascii ${service.uiState.value.isAsciiMode}->$isAsciiMode")
@@ -175,16 +209,21 @@ internal class ImeSessionController(private val service: XimeInputMethodService)
             service.dismissInlineSuggestions()
         }
 
+        val (finalCandidates, finalComments, customCount) = mergeAutoCandidates(
+            displayText, isAsciiMode, isT9Schema, displayCandidates, displayComments
+        )
+
         service.candidateState.value = service.candidateState.value.copy(
             inputText = displayText,
             preeditText = displayText,
-            candidates = displayCandidates,
-            candidateComments = displayComments,
+            candidates = finalCandidates,
+            candidateComments = finalComments,
             isComposing = isComposing,
             associationCandidates = if ((isAsciiMode || !service.isChineseMode) && pendingEnglish.isEmpty()) emptyList() else service.candidateState.value.associationCandidates,
             isShowingRecentClipboard = false,
             hasNextPage = result.hasNextPage,
-            hasPrevPage = result.hasPrevPage
+            hasPrevPage = result.hasPrevPage,
+            customPhraseCount = customCount
         )
         service.uiState.value = service.uiState.value.copy(isAsciiMode = isAsciiMode)
         

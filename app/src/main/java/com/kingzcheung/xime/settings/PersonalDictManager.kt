@@ -367,4 +367,36 @@ object PersonalDictManager {
         }
         return sb.toString()
     }
+
+    // ── 自动学习词（app 私有，有序；rime 不加载，仅供候选栏内存注入）──
+
+    private const val AUTO_PHRASE_DIR = "auto_phrase"
+
+    private fun autoPhraseFile(context: Context, schemaId: String): File {
+        val safe = schemaId.replace(Regex("[^A-Za-z0-9_.-]"), "_")
+        return File(File(context.filesDir, AUTO_PHRASE_DIR), "$safe.txt")
+    }
+
+    /** 读取当前方案的自动学习词（按文件行序，空行忽略）。 */
+    fun loadAutoPhrases(context: Context, schemaId: String): List<String> {
+        if (schemaId.isBlank()) return emptyList()
+        val file = autoPhraseFile(context.applicationContext, schemaId)
+        if (!file.exists()) return emptyList()
+        return try {
+            file.readText(Charsets.UTF_8).lineSequence()
+                .map { it.trimEnd('\r') }
+                .filter { it.isNotEmpty() }
+                .toList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /** 覆盖保存自动学习词（保持传入顺序）。 */
+    fun saveAutoPhrases(context: Context, schemaId: String, phrases: List<String>) {
+        val file = autoPhraseFile(context.applicationContext, schemaId)
+        file.parentFile?.mkdirs()
+        val body = if (phrases.isEmpty()) "" else phrases.joinToString("\n") + "\n"
+        file.writeText(body, Charsets.UTF_8)
+    }
 }
