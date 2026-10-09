@@ -54,8 +54,7 @@ private const val PROTECTION_DANGEROUS = 1
 private data class RuntimePermission(
     val permission: String,
     val title: String,
-    val description: String,
-    val groupKey: String
+    val description: String
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -136,17 +135,12 @@ fun PermissionSettingsContent(onBack: () -> Unit) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val groupOfPermission = remember(permissions) {
-        permissions.associate { it.permission to it.groupKey }
-    }
-
-    // 核心：顺序请求，一次只发一个权限
+    // 顺序请求每个未授权权限，避免同组权限被去重遗漏
     fun launchPermissionRequest(candidates: List<String>) {
         val applicable = candidates
             .asSequence()
             .filter { it != Manifest.permission.ACCESS_BACKGROUND_LOCATION }
             .filter { isApplicable(it) && !isGranted(context, it) }
-            .distinctBy { groupOfPermission[it] ?: permissionGroupKey(it) }
             .toList()
 
         if (applicable.isEmpty()) {
@@ -242,7 +236,7 @@ fun PermissionSettingsContent(onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                "系统会按权限组依次弹窗；后台位置、悬浮窗等特殊权限需要进入系统设置单独授权。",
+                "权限会按项依次申请；后台位置、悬浮窗等特殊权限需要进入系统设置单独授权。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -251,7 +245,7 @@ fun PermissionSettingsContent(onBack: () -> Unit) {
                 onClick = {
                     // 顺序契约：第一步永远先申请"所有文件访问"（未授权时跳系统设置页，
                     // 从该页返回后由 settingsLauncher 回调接续动态权限队列）；
-                    // 已授权（或 Android 11 以下）才直接进入动态权限组依次弹窗。
+                    // 已授权（或 Android 11 以下）才直接申请剩余运行时权限。
                     pendingPermissionQueue = emptyList()
                     currentPermission = null
                     isRequesting = false
@@ -266,7 +260,19 @@ fun PermissionSettingsContent(onBack: () -> Unit) {
                 }
             ) {
                 Icon(Icons.TwoTone.Security, contentDescription = null)
-                Text("申请全部权限")
+                Text("申请全部可请求权限")
+            }
+
+            SettingsSection(title = "存储权限") {
+                SpecialPermissionItem(
+                    title = "所有文件访问",
+                    granted = specialGranted["all_files"] == true,
+                    onClick = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            launchSettings(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                        }
+                    }
+                )
             }
 
             SettingsSection(title = "动态权限") {
@@ -313,15 +319,6 @@ fun PermissionSettingsContent(onBack: () -> Unit) {
                     onClick = {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                             launchSettings(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-                        }
-                    }
-                )
-                SpecialPermissionItem(
-                    title = "所有文件访问",
-                    granted = specialGranted["all_files"] == true,
-                    onClick = {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                            launchSettings(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
                         }
                     }
                 )
@@ -375,8 +372,7 @@ private fun findRuntimePermissions(context: Context): List<RuntimePermission> {
         RuntimePermission(
             permission = permission,
             title = permissionTitle(permission),
-            description = permissionDescription(permission),
-            groupKey = permissionGroupKey(permission)
+            description = permissionDescription(permission)
         )
     }
 }
@@ -433,55 +429,6 @@ private fun permissionDescription(permission: String): String = when (permission
     Manifest.permission.RECEIVE_SMS -> "接收短信"
     Manifest.permission.SEND_SMS -> "发送短信"
     else -> permission.substringAfterLast('.')
-}
-
-private fun permissionGroupKey(permission: String): String = when (permission) {
-    Manifest.permission.ACCESS_FINE_LOCATION,
-    Manifest.permission.ACCESS_COARSE_LOCATION,
-    Manifest.permission.ACCESS_BACKGROUND_LOCATION -> "location"
-
-    Manifest.permission.READ_CONTACTS,
-    Manifest.permission.WRITE_CONTACTS,
-    Manifest.permission.GET_ACCOUNTS -> "contacts"
-
-    Manifest.permission.READ_CALENDAR,
-    Manifest.permission.WRITE_CALENDAR -> "calendar"
-
-    Manifest.permission.READ_SMS,
-    Manifest.permission.RECEIVE_SMS,
-    Manifest.permission.SEND_SMS,
-    Manifest.permission.RECEIVE_MMS,
-    Manifest.permission.RECEIVE_WAP_PUSH -> "sms"
-
-    Manifest.permission.CAMERA -> "camera"
-    Manifest.permission.RECORD_AUDIO -> "microphone"
-
-    Manifest.permission.READ_PHONE_STATE,
-    Manifest.permission.CALL_PHONE,
-    Manifest.permission.READ_CALL_LOG,
-    Manifest.permission.WRITE_CALL_LOG,
-    Manifest.permission.ADD_VOICEMAIL,
-    Manifest.permission.USE_SIP,
-    Manifest.permission.PROCESS_OUTGOING_CALLS -> "phone"
-
-    Manifest.permission.BODY_SENSORS -> "sensors"
-
-    Manifest.permission.READ_EXTERNAL_STORAGE,
-    Manifest.permission.WRITE_EXTERNAL_STORAGE -> "storage"
-
-    Manifest.permission.READ_MEDIA_IMAGES,
-    Manifest.permission.READ_MEDIA_VIDEO,
-    Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED -> "media_visual"
-
-    Manifest.permission.READ_MEDIA_AUDIO -> "media_audio"
-
-    Manifest.permission.POST_NOTIFICATIONS -> "notifications"
-
-    Manifest.permission.BLUETOOTH_SCAN,
-    Manifest.permission.BLUETOOTH_CONNECT,
-    Manifest.permission.BLUETOOTH_ADVERTISE -> "bluetooth"
-
-    else -> permission
 }
 
 private fun isGranted(context: Context, permission: String): Boolean =

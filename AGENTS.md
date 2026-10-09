@@ -1,10 +1,8 @@
-# Xime 输入法
-
 ## 项目简介
-这是一个基于 rime 框架实现的安卓手机输入法，采用 kotlin + jetpack compose 构建。
+这是一个基于 rime 输入法，采用 kotlin + jetpack compose 构建。
 
 ## 快速开始
-- 构建： `./build.sh`
+- 构建：  ./debug_build_secexp.sh 就算不改任何文件重复构建也要一分钟
 - 测试： `./gradlew test`
 
 ## 插件开发
@@ -65,8 +63,8 @@ adb shell sh /data/local/tmp/unlock_pattern.sh
 - 必须带 TOUCH_MAJOR=50 否则系统忽略
 - 坐标通过 screencap 像素扫描确认，不要盲猜
 
-### 远程构建同步（GitHub 周转）
+### 远程构建同步（临时 用 apk-github-relay skill）
 1. 远端 push：`cd /root/build_xime_home/xime && ../git.py push https://cjqbj:<TOKEN>@github.com/cjqbj/xime -u`
 2. 本地 pull：`"C:/Program Files/Zerynth/python/Library/cmd/git.exe" -C C:\test\github\xime pull`
 
-注意：`git.py` 的 `-m/--commit-msg` 参数不能传空字符串，commit 消息由脚本自动生成。
+注意：`git.py` 的 `-m/--commit-msg` 参数不能传空字符串，commit 消息为空时候由git.py自动生成。
