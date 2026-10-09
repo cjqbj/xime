@@ -1,0 +1,21 @@
+应用图标文件：/root/build_xime_home/xime/app/src/main/res/drawable/ic_launcher_foreground.xml
+同步目录: /root/build_xime_home/multi_mqtt -> /root/build_xime_home/xime/app/src/main/python/multi_mqtt
+证书 SHA-256: 45dae96c7df223eb1c554dc95d23d40f1e5c5802110e8731a29148d8661da329
+证书 SHA-1:   774fe4151dce8f6a60aadbbc6cfe1a8a2ece6927
+使用 apksigner: /root/build_xime_home/.buildozer/android/platform/android-sdk/build-tools/37.0.0/apksigner
+签名成功: /root/build_xime_home/xime/app/build/outputs/apk/debug/repacked-20260917-arm64-v8a-signed.apk
+
+=== 已生成 APK ===
+-rw-r--r--. 1 root root 65990267 Oct  9 12:03 /root/build_xime_home/xime/out/com.qgb.xime-20260917-arm64-v8a.apk
+
+=== apksigner verify --print-certs ===
+V3.0 Signer: certificate DN: CN=APK_SIGNER, O=SELF, C=CN
+V3.0 Signer: certificate SHA-256 digest: 45dae96c7df223eb1c554dc95d23d40f1e5c5802110e8731a29148d8661da329
+V3.0 Signer: certificate SHA-1 digest: 774fe4151dce8f6a60aadbbc6cfe1a8a2ece6927
+V3.0 Signer: certificate MD5 digest: f49befc123a1c32125e0887c1fa8fe6d
+
+=== aapt badging ===
+package: name='com.qgb.xime' versionCode='20260917' versionName='20260917SECEXP=1长度17混合' platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='16'
+
+SECEXP=1
+APK=/root/build_xime_home/xime/out/com.qgb.xime-20260917-arm64-v8a.apk

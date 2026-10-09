@@ -327,6 +327,88 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
     internal val schemaController = ImeSchemaController(this)
 
     internal val textCommit = ImeTextCommit(this)
+
+    /**
+     * 把测试动作串行投递到 [keyProcessingDispatcher]（与正常按键/选词同一条 keyJobs
+     * 队列），并同步等待结果。RPC 线程（Chaquopy HTTP）调用 runBlocking 阻塞到动作完成，
+     * 既复用生产代码路径，又保证与实时按键不交错。
+     */
+    private fun <T> runSerialImeTest(produce: suspend () -> T): T {
+        val deferred = kotlinx.coroutines.CompletableDeferred<T>()
+        val job = serviceScope.launch(
+            keyProcessingDispatcher,
+            kotlinx.coroutines.CoroutineStart.LAZY
+        ) {
+            try {
+                deferred.complete(produce())
+            } catch (error: Throwable) {
+                deferred.completeExceptionally(error)
+            }
+        }
+        keyJobs.trySend(job)
+        return kotlinx.coroutines.runBlocking { deferred.await() }
+    }
+
+    /** 组装当前输入/候选完整快照（须在 key-process 线程调用，raw_input 走 JNI）。 */
+    internal fun buildImeSnapshot(): org.json.JSONObject {
+        val cs = candidateState.value
+        val ui = uiState.value
+        val candidatesArray = org.json.JSONArray()
+        cs.candidates.forEach { candidatesArray.put(it) }
+        val commentsArray = org.json.JSONArray()
+        cs.candidateComments.forEach { commentsArray.put(it) }
+        return org.json.JSONObject()
+            .put("schema", ui.currentSchemaId)
+            .put("ascii", ui.isAsciiMode)
+            .put("composing", cs.isComposing)
+            .put("input", cs.inputText)
+            .put("raw_input", rimeEngine.getInput())
+            .put("preedit", cs.preeditText)
+            .put("candidates", candidatesArray)
+            .put("comments", commentsArray)
+            .put("front", cs.customPhraseCount)
+            .put("tail", cs.demotedPhraseCount)
+            .put("has_next", cs.hasNextPage)
+            .put("has_prev", cs.hasPrevPage)
+    }
+
+    /** RpcUiController 用的输入/候选直达测试桥实现。 */
+    internal val imeTestBridge = object : com.kingzcheung.xime.util.RpcUiController.ImeTestBridge {
+        override fun type(code: String): String = runSerialImeTest {
+            val ok = rimeEngine.setInput(code)
+            sessionController.applyComposition(rimeEngine.getComposition())
+            buildImeSnapshot().put("set_input_ok", ok).toString()
+        }
+
+        override fun pressKey(letter: String): String = runSerialImeTest {
+            val result = rimeEngine.processKeyAndGetResult(letter[0].code, 0)
+            sessionController.updateUIWithResult(result)
+            buildImeSnapshot().put("processed", result.processed).toString()
+        }
+
+        override fun pick(index: Int): String = runSerialImeTest {
+            val before = buildImeSnapshot()
+            keyRouter.selectCandidateAsync(index)
+            val after = buildImeSnapshot()
+            org.json.JSONObject()
+                .put("before", before)
+                .put("after", after)
+                .toString()
+        }
+
+        override fun reset(): String = runSerialImeTest {
+            rimeEngine.clearComposition()
+            withContext(Dispatchers.Main) {
+                candidateState.value = CandidateState()
+                endComposingInputBox()
+            }
+            buildImeSnapshot().toString()
+        }
+
+        override fun snapshot(): String = runSerialImeTest {
+            buildImeSnapshot().toString()
+        }
+    }
     
     private val inlineSuggestionManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         InlineSuggestionManager(this)
@@ -440,6 +522,8 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
 
     override fun onCreate() {
         super.onCreate()
+        // 挂载输入/候选直达测试桥，供 Chaquopy RPC 调试（卸载/销毁时摘除）。
+        com.kingzcheung.xime.util.RpcUiController.attachIme(imeTestBridge)
         // 允许 IME 窗口绘制到摄像头挖孔/刘海区域（横屏时背景覆盖全屏）
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
             window.window?.attributes?.layoutInDisplayCutoutMode =
@@ -1685,6 +1769,7 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
 
     override fun onDestroy() {
         super.onDestroy()
+        com.kingzcheung.xime.util.RpcUiController.detachIme(imeTestBridge)
         sharedPrefsListener?.let {
             SettingsPreferences.getPrefsPublic(this).unregisterOnSharedPreferenceChangeListener(it)
         }

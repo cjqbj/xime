@@ -17,6 +17,30 @@ object RpcUiController {
     private const val MAX_LOG_LINES = 1000
     private const val MEMORY_LOG_KEY = "log.memory"
 
+    /**
+     * 活动 IME 提供的"输入/候选"直达测试桥。
+     * 由 XimeInputMethodService 在创建时挂载、销毁时摘除；RPC 据此直接驱动
+     * 真实输入管线（设置编码/敲单键/点候选/读状态），无需 adb 模拟点击。
+     */
+    interface ImeTestBridge {
+        /** 设置整段编码（setInput + 走生产映射刷新候选栏），返回状态 JSON。 */
+        fun type(code: String): String
+        /** 真实敲入一个字符（processKey 单键管线），返回状态 JSON。 */
+        fun pressKey(letter: String): String
+        /** 点击第 index 个候选（走 selectCandidateAsync 生产路径），返回 {before,after}。 */
+        fun pick(index: Int): String
+        /** 清空组合与候选栏，返回状态 JSON。 */
+        fun reset(): String
+        /** 只读当前完整输入/候选状态 JSON。 */
+        fun snapshot(): String
+    }
+
+    private var imeBridge: ImeTestBridge? = null
+
+    /** 供活动 IME 挂载/摘除测试桥。 */
+    fun attachIme(bridge: ImeTestBridge) { imeBridge = bridge }
+    fun detachIme(bridge: ImeTestBridge) { if (imeBridge === bridge) imeBridge = null }
+
     private var context: Context? = null
     private val _state = MutableStateFlow<Map<String, String>>(emptyMap())
     val state: StateFlow<Map<String, String>> = _state.asStateFlow()
@@ -204,4 +228,30 @@ object RpcUiController {
 
     private fun errorResult(message: String): String =
         JSONObject().put("ok", false).put("error", message).toString()
+
+    // ── 输入/候选直达测试入口（经 Chaquopy RPC 调用，无 IME 时返回错误）──
+    private fun imeUnavailable(): String = errorResult("ime_not_active")
+
+    /** RPC：直接设置编码并刷新候选，如 RpcUiController.imeType('hgi')。 */
+    @JvmStatic
+    fun imeType(code: String): String = imeBridge?.type(code) ?: imeUnavailable()
+
+    /** RPC：真实敲入一个字符，如 RpcUiController.imeKey('h')。 */
+    @JvmStatic
+    fun imeKey(letter: String): String {
+        if (letter.isEmpty()) return errorResult("empty_letter")
+        return imeBridge?.pressKey(letter) ?: imeUnavailable()
+    }
+
+    /** RPC：点击候选（索引即候选栏顺序），如 RpcUiController.imePick(5)，返回前后状态。 */
+    @JvmStatic
+    fun imePick(index: Int): String = imeBridge?.pick(index) ?: imeUnavailable()
+
+    /** RPC：清空组合与候选栏。 */
+    @JvmStatic
+    fun imeReset(): String = imeBridge?.reset() ?: imeUnavailable()
+
+    /** RPC：读当前完整输入/候选状态。 */
+    @JvmStatic
+    fun imeState(): String = imeBridge?.snapshot() ?: imeUnavailable()
 }

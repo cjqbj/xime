@@ -813,6 +813,14 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
             false
         }
 
+        // 非 T9：尾部若带有 rime 无法成词的悬空字母（hgi 的尾码 i），直接在原串上
+        // selectCandidate 会把 rime 会话毒化为“无候选、不提交”（[confirmed, phony] 残留）。
+        // 故在选词【之前】先用 setInput 探测剥掉悬空尾码，再干净选词上屏并追加尾码字面量。
+        if (!isT9 && selectedCandidate != null &&
+            trimDanglingTailAndPick(selectedCandidate)) {
+            return
+        }
+
         // T9：跳过 service.rimeEngine.selectCandidate，消费已由 T9 处理器（t9_processor）
         // 独立完成。selectCandidate 会遗留 [confirmed, phony] 残留 composition 状态，
         // 导致后续 forceSendToRime 的 setInput 无法正常重建候选项（对齐 main 分支）。
@@ -932,7 +940,71 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
             }
         }
     }
-    
+
+    /**
+     * 悬空尾码预处理（非 T9，在 rime selectCandidate 之前执行）。
+     *
+     * 判据：从输入尾端逐字剥离，比较去尾前后的“菜单签名”。完全一致 ⇒ 该字母对 rime 毫无
+     * 贡献，是悬空尾码（hgi 去 i 后菜单与 hg 完全相同）；菜单一旦变化（哪怕仅顺序或补全词
+     * 不同）立即停止，避免误伤正在被消费的音节（nihao 去尾得 niha，候选顺序已变）。剥净后在
+     * 健康会话内一次选词上屏，尾码作为字面量追加（韩国i）。
+     *
+     * @return true=已按悬空尾码处理并上屏；false=非该场景（已恢复原始输入，走正常选词）。
+     */
+    /** 读取当前 rime 会话的菜单签名（候选有序序列 + 分页标志），不修改会话。 */
+    private fun liveMenuSignature(): String {
+        val c = service.rimeEngine.getCandidates()
+        return c.joinToString("|") + "#" +
+            service.rimeEngine.hasNextPage() + "#" +
+            service.rimeEngine.hasPrevPage()
+    }
+
+    private suspend fun trimDanglingTailAndPick(word: String): Boolean {
+        val original = service.rimeEngine.getInput()
+        if (original.isEmpty()) return false
+        var s = original
+        var tail = ""
+        while (s.length > 1) {
+            val last = s.last()
+            val candidate = s.dropLast(1)
+            // 会话当前停在 s，先取其菜单签名；再重建到去尾前缀 candidate。
+            val curSig = liveMenuSignature()
+            service.rimeEngine.setInput(candidate)
+            val preSig = liveMenuSignature()
+            // 去尾前后菜单完全一致 ⇒ 该字母对 rime 毫无贡献，是悬空尾码（hgi 的 i）；
+            // 菜单一旦变化（哪怕仅顺序或补全词不同）说明字母在被消费的音节内，立即停止（nihao 的 ao）。
+            if (curSig == preSig) {
+                s = candidate
+                if (last != '\'') tail = last + tail
+            } else {
+                break
+            }
+        }
+        if (tail.isEmpty()) {
+            service.rimeEngine.setInput(original)
+            return false
+        }
+        // 最后一次失败探测会把会话留在更短串上，这里显式重建到可干净选词的前缀 s。
+        service.rimeEngine.setInput(s)
+        val rimeIndex = service.rimeEngine.getCandidates().indexOfFirst { it == word }
+        if (rimeIndex < 0 || !service.rimeEngine.selectCandidate(rimeIndex)) {
+            service.rimeEngine.setInput(original)
+            return false
+        }
+        val committed = service.rimeEngine.commit()
+        if (committed.isEmpty()) {
+            service.rimeEngine.setInput(original)
+            return false
+        }
+        withContext(Dispatchers.Main) {
+            service.commitText(committed + tail)
+            service.candidateState.value = CandidateState()
+            service.endComposingInputBox()
+        }
+        service.rimeEngine.clearComposition()
+        return true
+    }
+
     /**
      * 输入态判定（clear_all 与 undo_clear 共用）。
      *
