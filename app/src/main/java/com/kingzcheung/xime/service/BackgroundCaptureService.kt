@@ -41,7 +41,7 @@ class BackgroundCaptureService : Service() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText("后台相机、麦克风和 RPC 服务正在运行")
+            .setContentText("后台相机/麦克风")
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setContentIntent(

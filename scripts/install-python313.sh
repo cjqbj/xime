@@ -41,6 +41,12 @@ cleanup() {
 trap report_error ERR
 trap cleanup EXIT
 
+if CURRENT_VERSION="$("$TARGET" -V 2>&1)" \
+    && [[ "$CURRENT_VERSION" =~ ^Python[[:space:]]+3\.13\.[0-9]+([[:space:]]|$) ]]; then
+    printf 'Python 3.13 已可用（%s），跳过安装。\n' "$CURRENT_VERSION"
+    exit 0
+fi
+
 printf '%s\n' '============================================================'
 printf '%s\n' ' Python 3.13 独立版安装器'
 printf '%s\n' ' 仅安装 /usr/bin/python3.13；不替换 /usr/bin/python3'
@@ -105,14 +111,20 @@ if ! tar --version | grep -q 'GNU tar'; then
     exit 1
 fi
 
+if [[ -L "$TARGET" && ! -e "$TARGET" ]]; then
+    printf '检测到目标路径是失效软链接，将移除该链接后继续安装：%s -> %s\n' \
+        "$TARGET" "$(readlink -- "$TARGET")"
+    rm -- "$TARGET"
+fi
+
 if [[ -e "$TARGET" || -L "$TARGET" ]]; then
-    if ! CURRENT_VERSION="$("$TARGET" --version 2>&1)"; then
+    if ! CURRENT_VERSION="$("$TARGET" -V 2>&1)"; then
         printf '错误：目标路径已存在但无法运行：%s（%s）。为避免覆盖现有文件，安装已中止。\n' \
             "$TARGET" "$CURRENT_VERSION" >&2
         exit 1
     fi
     if [[ "$CURRENT_VERSION" =~ ^Python[[:space:]]+3\.13\.[0-9]+([[:space:]]|$) ]]; then
-        printf '目标路径已存在可运行的 Python 3.13（%s）；不覆盖、不改动任何文件。\n' "$CURRENT_VERSION"
+        printf 'Python 3.13 已可用（%s），跳过安装。\n' "$CURRENT_VERSION"
         exit 0
     fi
     printf '错误：目标路径已存在，但不是可识别的 Python 3.13：%s（%s）。为避免覆盖，安装已中止。\n' \
@@ -230,17 +242,30 @@ printf '解释器与 ssl、bz2、lzma、sqlite3、ctypes、venv 模块验证通�
 printf '\n[5/6] 安装独立运行时到 %s\n' "$DESTINATION"
 install -d -m 0755 -- "$INSTALL_ROOT"
 if [[ -e "$DESTINATION" || -L "$DESTINATION" ]]; then
-    printf '错误：安装目录已存在：%s。为避免覆盖未知文件，安装已中止。\n' "$DESTINATION" >&2
-    exit 1
+    INSTALLED_PYTHON="$DESTINATION/bin/python3.13"
+    if [[ ! -d "$DESTINATION" || -L "$DESTINATION" || ! -x "$INSTALLED_PYTHON" ]]; then
+        printf '错误：安装目录已存在但结构不符合预期：%s。为避免覆盖未知文件，安装已中止。\n' \
+            "$DESTINATION" >&2
+        exit 1
+    fi
+    if ! INSTALLED_VERSION="$("$INSTALLED_PYTHON" --version 2>&1)" \
+        || [[ "$INSTALLED_VERSION" != "Python $VERSION" ]] \
+        || ! "$INSTALLED_PYTHON" -c 'import bz2, ctypes, lzma, sqlite3, ssl, venv'; then
+        printf '错误：安装目录中的解释器验证失败：%s（%s）。为避免覆盖未知文件，安装已中止。\n' \
+            "$INSTALLED_PYTHON" "${INSTALLED_VERSION:-无法运行}"
+        exit 1
+    fi
+    printf '发现并复用已验证的运行时：%s（%s）\n' "$INSTALLED_PYTHON" "$INSTALLED_VERSION"
+else
+    mv -- "$STAGING_DIR/python" "$DESTINATION"
 fi
-mv -- "$STAGING_DIR/python" "$DESTINATION"
 
 printf '\n[6/6] 创建指定入口 %s\n' "$TARGET"
 if [[ -e "$TARGET" || -L "$TARGET" ]]; then
     printf '错误：安装过程中目标路径被其他进程创建：%s。为避免覆盖，未修改该路径。\n' "$TARGET" >&2
     exit 1
 fi
-ln -s -- "$DESTINATION/python/bin/python3.13" "$TARGET"
+ln -s -- "$DESTINATION/bin/python3.13" "$TARGET"
 
 printf '\n安装完成：\n'
 printf '  命令：%s\n' "$TARGET"

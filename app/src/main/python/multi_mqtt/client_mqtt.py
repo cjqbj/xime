@@ -1,14 +1,6 @@
 #!/usr/bin/env python3
-import argparse,time,threading,os, sys, logging, codeop, importlib,builtins as _builtins
-
-# 本模块已迁移到 client/ 子目录：把项目根目录与本目录加入 sys.path，
-# 同时兼容「python client/client_mqtt.py」直接运行与「from client import ...」包导入。
-_HERE = os.path.dirname(os.path.abspath(__file__))
-for _p in (os.path.dirname(_HERE), _HERE):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
 from multi_mqtt import MultiMQTTManager, get_req_id, utc_ms, get_standard_pem_bytes,get_duplicated_kargs
+import argparse,time,threading,os, sys, logging, codeop, importlib,builtins as _builtins
 
 logger = logging.getLogger(__file__)
 from server_mqtt import REQUEST_TOPIC, DEFAULT_REPLY_TOPIC as REPLY_TOPIC
@@ -30,21 +22,6 @@ alias_help         =('help','h','?')
 alias_exit         =('exit', 'quit')
 alias_timeout      =('timeout','time','wait','second','sec')
 
-def _cli_opts(*names):
-    """从别名生成 argparse 选项：自动加 --/- 前缀，_ 与 - 都支持；单字符只出 -x。
-
-    模块级唯一实现，client_mqtt 自己的 CLI 以及 cmd_client_mqtt /
-    pty_client_mqtt 的连接参数都通过它 + 上面的 alias_xxx 别名表生成，
-    保证三处（rpc(**ka) / CLI / %magic）参数名永远一致。
-    """
-    out, seen = [], set()
-    for n in names:
-        for f in (n, n.replace('_', '-')):
-            for c in (('-' + f,) if len(f) == 1 else ('--' + f, '-' + f)):
-                if c not in seen:
-                    seen.add(c); out.append(c)
-    return out
-
 _default_client = None
 _default_client_lock = threading.Lock()
 
@@ -58,17 +35,9 @@ class MQTTClientNode:
         self.lock = threading.Lock()
         self._subscribed_topics = set()
 
-    def start(self, connect_timeout=10.0):
+    def start(self):
         self.mqtt_net.start()
-        # 不再写死 sleep(2)：等第一个 broker 一连上就继续（实测最快约
-        # 0.1s）；全部连不上时最多等到超时，随后台重连继续往下走，
-        # 由后续请求自身的超时决定成败。
-        online = self.mqtt_net.wait_connected(
-            min_count=1, timeout=connect_timeout)
-        if online <= 0:
-            logger.warning(
-                "启动后 %.0fs 内没有任何 broker 连接成功，继续尝试"
-                "（paho 会在后台自动重连）", connect_timeout)
+        time.sleep(2)
         self._subscribe_once(REPLY_TOPIC)
 
     def _subscribe_once(self, topic):
@@ -107,21 +76,12 @@ class MQTTClientNode:
         cost_ms = (time.perf_counter() - req_ctx['start_time']) * 1000
         resp["latency_ms"] = round(cost_ms, 2)
         resp["client_from"] = rx_broker
-        if req_ctx.get("response") is not None:
-            # 首包已回收：同 req_id 的后续回包来自其他持相同 key 的服务端
-            # 进程（一个请求会被每台在线设备各执行一次）。调用方开了
-            # gather_window 时把这些迟到回包收集起来做归属仲裁，不覆盖首包。
-            with self.lock:
-                req_ctx.setdefault("extras", []).append(resp)
-            return
         req_ctx['response'] = resp
         req_ctx['event'].set()
 
     def request(self, payload: str, request_topic: str = REQUEST_TOPIC, timeout: float = DEFAULT_TIMEOUT,
                 client_private_key_bytes=None, allow_no_server_pubkey_response: bool = None,
-                reply_topic: str = REPLY_TOPIC, gather_window: float = 0.0,
-                republish_delays=()):
-        none={}
+                reply_topic: str = REPLY_TOPIC):
         if client_private_key_bytes is None:
             client_private_key_bytes = self.client_private_key_bytes or getattr(self.mqtt_net, "client_private_key_bytes", None)
         if allow_no_server_pubkey_response is None:
@@ -132,7 +92,6 @@ class MQTTClientNode:
         req_data = {"req_id": req_id, "reply_topic": reply_topic, "code": payload, "timestamp": ms}
         event = threading.Event()
         req_ctx = {"event": event, "start_time": start_time, "response": None,
-                   "extras": [],
                    "client_private_key_bytes": client_private_key_bytes,
                    "allow_no_server_pubkey_response": allow_no_server_pubkey_response}
         with self.lock:
@@ -145,47 +104,22 @@ class MQTTClientNode:
                 print(f"[ERROR] 订阅 reply_topic 失败: {exc}")
                 with self.lock:
                     self.pending_requests.pop(req_id, None)
-                return none
-        def _do_publish():
-            self.mqtt_net.publish_broadcast(
-                request_topic, req_data,
-                client_private_key_bytes=client_private_key_bytes)
-
+                return None
         try:
-            _do_publish()
+            self.mqtt_net.publish_broadcast(request_topic, req_data, client_private_key_bytes=client_private_key_bytes)
         except Exception as exc:
             with self.lock:
                 self.pending_requests.pop(req_id, None)
             logger.error(f"❌ [请求发送失败] {request_topic} req_id={req_id} error={exc}")
             print(f"[ERROR] 请求发送失败: {exc}")
-            return none
-        # 首包未回前的补发计划：publish_broadcast 是 QoS0 且只投递给当前已
-        # 连接的 broker，启动瞬间往往只有 1 个 broker 在线，之后几秒内其余
-        # broker 才陆续连上——它们永远收不到首发请求，首包只能赌首发那条
-        # 路径的当下延迟。按同一 req_id 补发是安全的：服务端 dedup_cache
-        # （30s TTL）丢弃重复副本，幂等请求（如 PTY 握手同 sid）还另有会话
-        # 注册表兜底；首包一到立即停发，健康链路下零额外开销。
-        repub_at = sorted(float(x) for x in (republish_delays or ()) if x > 0)
-        repub_i = 0
+            return None
         is_success = False
         try:
             start_t = time.perf_counter()
             while time.perf_counter() - start_t < timeout:
-                if event.wait(timeout=0.1):
+                if event.wait(timeout=0.2):
                     is_success = True
                     break
-                while (repub_i < len(repub_at)
-                       and (time.perf_counter() - start_t) >= repub_at[repub_i]):
-                    repub_i += 1
-                    try:
-                        _do_publish()
-                    except Exception:
-                        logger.exception(
-                            "请求补发失败 req_id=%s", req_id)
-            if is_success and gather_window > 0:
-                # 首包到手后再留一个小窗：其他持相同 key 的服务端进程对同
-                # 一请求的迟到回包在此到齐（PTY 多应答者归属仲裁用）。
-                time.sleep(min(gather_window, max(0.0, timeout - (time.perf_counter() - start_t))))
         except KeyboardInterrupt:
             logger.warning(f"⚠️ [请求中断] {request_topic} req_id={req_id}")
             print("[INFO] 用户中断等待，已停止本次请求。")
@@ -194,112 +128,9 @@ class MQTTClientNode:
             with self.lock:
                 self.pending_requests.pop(req_id, None)
         if is_success:
-            if gather_window > 0:
-                first = dict(req_ctx['response'])
-                first["_extra_responses"] = list(req_ctx.get("extras", []))
-                return first
             return req_ctx['response']
         logger.error(f"❌ [请求超时] {request_topic} req_id={req_id}")
-        return none
-
-    def request_bg_gather(self, payload: str, *, request_topic=REQUEST_TOPIC,
-                          timeout=DEFAULT_TIMEOUT, client_private_key_bytes=None,
-                          allow_no_server_pubkey_response=None,
-                          reply_topic=REPLY_TOPIC, gather_window: float = 0.8,
-                          republish_delays=(), on_gather=None):
-        """与 :meth:`request` 相同的一发一收，但 **首包一到立即返回**；
-        随后在后台 daemon 线程继续留 ``gather_window`` 秒收集其他持相同 key
-        的服务端进程的迟到回包，收集结束后回调一次
-        ``on_gather(extras: list[dict])``（无回调时后台仅做清理）。
-
-        用于 PTY/SOCKS5 会话握手：首屏不再被 gather 窗口阻塞，影子应答者
-        告警晚 gather_window 秒到达即可（只走本地日志）。无回包超时返回 {}。
-        """
-        none = {}
-        if client_private_key_bytes is None:
-            client_private_key_bytes = self.client_private_key_bytes or getattr(self.mqtt_net, "client_private_key_bytes", None)
-        if allow_no_server_pubkey_response is None:
-            allow_no_server_pubkey_response = self.allow_no_server_pubkey_response
-        ms = utc_ms()
-        req_id = get_req_id(ms)
-        start_time = time.perf_counter()
-        req_data = {"req_id": req_id, "reply_topic": reply_topic,
-                    "code": payload, "timestamp": ms}
-        event = threading.Event()
-        req_ctx = {"event": event, "start_time": start_time, "response": None,
-                   "extras": [],
-                   "client_private_key_bytes": client_private_key_bytes,
-                   "allow_no_server_pubkey_response": allow_no_server_pubkey_response}
-        with self.lock:
-            self.pending_requests[req_id] = req_ctx
-        if reply_topic != REPLY_TOPIC:
-            try:
-                self._subscribe_once(reply_topic)
-            except Exception as exc:
-                logger.error(f"❌ [订阅失败] reply_topic={reply_topic} error={exc}")
-                with self.lock:
-                    self.pending_requests.pop(req_id, None)
-                return none
-
-        def _do_publish():
-            self.mqtt_net.publish_broadcast(
-                request_topic, req_data,
-                client_private_key_bytes=client_private_key_bytes)
-
-        try:
-            _do_publish()
-        except Exception as exc:
-            with self.lock:
-                self.pending_requests.pop(req_id, None)
-            logger.error(f"❌ [请求发送失败] {request_topic} req_id={req_id} error={exc}")
-            return none
-        repub_at = sorted(float(x) for x in (republish_delays or ()) if x > 0)
-        repub_i = 0
-        got = False
-        start_t = time.perf_counter()
-        try:
-            while time.perf_counter() - start_t < timeout:
-                if event.wait(timeout=0.1):
-                    got = True
-                    break
-                while (repub_i < len(repub_at)
-                       and (time.perf_counter() - start_t) >= repub_at[repub_i]):
-                    repub_i += 1
-                    try:
-                        _do_publish()
-                    except Exception:
-                        logger.exception("请求补发失败 req_id=%s", req_id)
-        except KeyboardInterrupt:
-            with self.lock:
-                self.pending_requests.pop(req_id, None)
-            raise
-        if not got:
-            with self.lock:
-                self.pending_requests.pop(req_id, None)
-            logger.error(f"❌ [请求超时] {request_topic} req_id={req_id}")
-            return none
-        first = dict(req_ctx["response"])
-
-        def _bg():
-            # 与 request() 同步 gather 的窗口口径一致：从首发起算、不超 timeout
-            try:
-                remain = min(float(gather_window),
-                             max(0.0, float(timeout)
-                                 - (time.perf_counter() - start_t)))
-                if remain > 0:
-                    time.sleep(remain)
-            finally:
-                with self.lock:
-                    extras = list(req_ctx.get("extras", []))
-                    self.pending_requests.pop(req_id, None)
-            if on_gather is not None:
-                try:
-                    on_gather(extras)
-                except Exception:
-                    logger.exception("on_gather 回调异常 req_id=%s", req_id)
-
-        threading.Thread(target=_bg, name="req-gather", daemon=True).start()
-        return first
+        return None
 
     def stop(self):
         try:
@@ -710,6 +541,16 @@ def _fallback_code_input():
         prompt = "... "
 
 if __name__ == "__main__":
+    def _cli_opts(*names):
+        """从别名生成 argparse 选项：自动加 --/- 前缀，_ 与 - 都支持；单字符只出 -x。"""
+        out, seen = [], set()
+        for n in names:
+            for f in (n, n.replace('_', '-')):
+                for c in (('-' + f,) if len(f) == 1 else ('--' + f, '-' + f)):
+                    if c not in seen:
+                        seen.add(c); out.append(c)
+        return out
+
     parser = argparse.ArgumentParser(description="MQTT RPC client")
     parser.add_argument(
         *_cli_opts(*alias_private_key),
@@ -728,12 +569,12 @@ if __name__ == "__main__":
     parser.add_argument(
         *_cli_opts(*alias_request_topic),
         type=str, default=REQUEST_TOPIC, dest="request_topic",
-        help=f"REPL 起始 request_topic（默认 {REQUEST_TOPIC}）；运行中可用 %%topic 切换。",
+        help=f"REPL 起始 request_topic（默认 {REQUEST_TOPIC}）；运行中可用 %topic 切换。",
     )
     parser.add_argument(
         *_cli_opts(*alias_reply_topic),
         type=str, default=REPLY_TOPIC, dest="reply_topic",
-        help=f"REPL 起始 reply_topic（默认 {REPLY_TOPIC}）；运行中可用 %%reply 切换。",
+        help=f"REPL 起始 reply_topic（默认 {REPLY_TOPIC}）；运行中可用 %reply 切换。",
     )
     parser.add_argument(
         *_cli_opts(*alias_history),

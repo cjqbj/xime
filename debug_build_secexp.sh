@@ -10,6 +10,11 @@ if (($#)); then
     exit 2
 fi
 
+if grep -Eq '^[[:space:]]*version[[:space:]]*=[[:space:]]*"3\.13"[[:space:]]*$' \
+    "$PROJECT_DIR/app/build.gradle.kts"; then
+    "$PROJECT_DIR/scripts/install-python313.sh"
+fi
+
 # ============================================================
 # 构建参数：需要调整时只修改本段。
 # APP_ICON_PATH 默认使用项目当前的前景图标；可改为 PNG、WebP 或矢量 XML 文件。

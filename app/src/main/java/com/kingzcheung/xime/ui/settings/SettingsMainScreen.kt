@@ -539,7 +539,7 @@ private fun PermissionRequestPanel(onNavigateToPermissions: () -> Unit) {
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("后台相机/麦克风/RPC")
+                Text("后台相机/麦克风")
                 Text(
                     "显示常驻通知后允许后台调用；默认关闭",
                     style = MaterialTheme.typography.bodySmall,

@@ -154,7 +154,7 @@ r={
     'env':env
 }
 '''
-from client import client_mqtt
+import client_mqtt
 res = client_mqtt.rpc(code)
 print(res['r'])
 res
