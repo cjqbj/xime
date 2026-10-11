@@ -1,0 +1,5 @@
+schema_list:
+  - schema: xime_keytest
+
+switcher:
+  caption: ""

@@ -139,6 +139,15 @@ class PredictionManager(
     }
     
     fun recordInput(text: String) {
+        if (AssociationService.recordInput(text)) {
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    AssociationService.saveUserEnglishHistory()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to save English input history", e)
+                }
+            }
+        }
         if (SettingsPreferences.isSmartPredictionEnabled(context) && AssociationManager.isInitialized()) {
             AssociationManager.recordInput(text)
         }

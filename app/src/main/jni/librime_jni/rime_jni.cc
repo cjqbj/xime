@@ -8,6 +8,7 @@
 #include "t9_processor.h"
 #include "t9_patch_utils.h"
 #include "t9_digit_userdict.h"
+#include "rime_candidate_selection.h"
 #include <jni.h>
 #include <android/log.h>
 #include <memory>
@@ -445,8 +446,32 @@ public:
         }
     }
 
-    bool selectCandidate(int index) {
+    bool selectCandidate(
+        int index,
+        const std::string* expectedText = nullptr,
+        const std::string* expectedComment = nullptr
+    ) {
         if (!rime || !session_id_) return false;
+        if (expectedText) {
+            RIME_STRUCT(RimeContext, context);
+            if (!rime->get_context(session_id_, &context)) return false;
+
+            std::vector<std::pair<std::string, std::string>> candidates;
+            candidates.reserve(context.menu.num_candidates);
+            for (int i = 0; i < context.menu.num_candidates; ++i) {
+                const auto& candidate = context.menu.candidates[i];
+                candidates.emplace_back(
+                    candidate.text ? candidate.text : "",
+                    candidate.comment ? candidate.comment : ""
+                );
+            }
+            rime->free_context(&context);
+
+            index = xime::resolveCandidateIndex(
+                candidates, index, expectedText, expectedComment
+            );
+            if (index < 0) return false;
+        }
         return rime->select_candidate_on_current_page(session_id_, index);
     }
     
@@ -464,7 +489,7 @@ public:
         if (!rime || !session_id_) return false;
         RIME_STRUCT(RimeContext, context);
         if (rime->get_context(session_id_, &context)) {
-            bool result = context.menu.page_no < context.menu.page_no + 1;
+            bool result = !context.menu.is_last_page;
             rime->free_context(&context);
             return result;
         }
@@ -1312,9 +1337,32 @@ JNIEXPORT jboolean JNICALL
 Java_com_kingzcheung_xime_rime_RimeEngine_nativeSelectCandidate(
     JNIEnv* env,
     jobject thiz,
-    jint index
+    jint index,
+    jstring expected_text,
+    jstring expected_comment
 ) {
-    return Rime::Instance().selectCandidate(index) ? JNI_TRUE : JNI_FALSE;
+    std::string expectedText;
+    std::string expectedComment;
+    const std::string* expectedTextPtr = nullptr;
+    const std::string* expectedCommentPtr = nullptr;
+
+    if (expected_text) {
+        const char* value = env->GetStringUTFChars(expected_text, nullptr);
+        if (!value) return JNI_FALSE;
+        expectedText = value;
+        env->ReleaseStringUTFChars(expected_text, value);
+        expectedTextPtr = &expectedText;
+    }
+    if (expected_comment) {
+        const char* value = env->GetStringUTFChars(expected_comment, nullptr);
+        if (!value) return JNI_FALSE;
+        expectedComment = value;
+        env->ReleaseStringUTFChars(expected_comment, value);
+        expectedCommentPtr = &expectedComment;
+    }
+    return Rime::Instance().selectCandidate(
+        index, expectedTextPtr, expectedCommentPtr
+    ) ? JNI_TRUE : JNI_FALSE;
 }
 
 // 翻页 - 下一页

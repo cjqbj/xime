@@ -332,10 +332,14 @@ class RimeEngine {
         }
     }
 
-    fun selectCandidate(index: Int): Boolean {
+    fun selectCandidate(
+        index: Int,
+        expectedText: String? = null,
+        expectedComment: String? = null
+    ): Boolean {
         return tryLocked(false) {
             if (!nativeHasSession()) return@tryLocked false
-            nativeSelectCandidate(index)
+            nativeSelectCandidate(index, expectedText, expectedComment)
         }
     }
 
@@ -677,7 +681,11 @@ class RimeEngine {
     private external fun nativeGetCandidatesWithComments(): Array<Array<String>>?
     private external fun nativeGetInput(): String?
     private external fun nativeGetComposition(): RimeComposition
-    private external fun nativeSelectCandidate(index: Int): Boolean
+    private external fun nativeSelectCandidate(
+        index: Int,
+        expectedText: String?,
+        expectedComment: String?
+    ): Boolean
     private external fun nativePageDown(): Boolean
     private external fun nativePageUp(): Boolean
     private external fun nativeHasNextPage(): Boolean

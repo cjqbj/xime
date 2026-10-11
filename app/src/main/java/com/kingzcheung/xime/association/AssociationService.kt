@@ -10,6 +10,8 @@ object AssociationService {
     
     private var trieEngine: TrieAssociationEngine? = null
     private var isInitialized = false
+    private val pendingEnglishInputs = mutableListOf<String>()
+    private val historyLock = Any()
     
     suspend fun initialize(context: Context): Boolean = withContext(Dispatchers.IO) {
         if (isInitialized) {
@@ -17,10 +19,17 @@ object AssociationService {
         }
         
         try {
-            trieEngine = TrieAssociationEngine.getInstance()
-            val trieInit = trieEngine!!.initialize(context)
+            val engine = TrieAssociationEngine.getInstance()
+            trieEngine = engine
+            val trieInit = engine.initialize(context)
             
-            isInitialized = trieInit
+            val pendingInputs = synchronized(historyLock) {
+                isInitialized = trieInit
+                if (trieInit) pendingEnglishInputs.toList().also { pendingEnglishInputs.clear() }
+                else emptyList()
+            }
+            pendingInputs.forEach(engine::recordInput)
+            if (pendingInputs.isNotEmpty()) engine.saveUserHistory()
             Log.i(TAG, "Association service initialized: trie=$trieInit")
             
             isInitialized
@@ -91,6 +100,26 @@ object AssociationService {
     }
     
     fun isInitialized(): Boolean = isInitialized
+
+    fun recordInput(text: String): Boolean {
+        val hasEnglishWords = EnglishWordHistory.hasEnglishWords(text)
+        if (!hasEnglishWords) return false
+
+        synchronized(historyLock) {
+            val engine = trieEngine
+            if (isInitialized && engine != null) {
+                engine.recordInput(text)
+            } else {
+                pendingEnglishInputs.add(text)
+                if (pendingEnglishInputs.size > 100) pendingEnglishInputs.removeAt(0)
+            }
+        }
+        return true
+    }
+
+    suspend fun saveUserEnglishHistory() = withContext(Dispatchers.IO) {
+        trieEngine?.saveUserHistory()
+    }
     
     fun isTrieInitialized(): Boolean = trieEngine?.isInitialized() ?: false
     

@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.io.DataInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -18,11 +19,13 @@ data class TrieNodeData(
 class TrieAssociationEngine {
     private var nodes: Array<TrieNodeData>? = null
     private var isInitialized = false
+    private val englishWordHistory = EnglishWordHistory()
     
     companion object {
         private const val TAG = "TrieAssociationEngine"
         private const val BINARY_FILE = "english_trie.bin"
         private const val TEXT_FILE = "english.txt"
+        private const val HISTORY_FILE = "english_word_history.tsv"
         private var instance: TrieAssociationEngine? = null
         
         fun getInstance(): TrieAssociationEngine {
@@ -53,6 +56,7 @@ class TrieAssociationEngine {
                 Log.w(TAG, "Binary trie not found, building from text")
                 buildTrieFromText(context)
             }
+            englishWordHistory.load(File(context.filesDir, HISTORY_FILE))
             
             isInitialized = true
             val elapsed = System.currentTimeMillis() - startTime
@@ -171,16 +175,32 @@ class TrieAssociationEngine {
             return@withContext emptyList()
         }
         
-        val normalizedPrefix = prefix.lowercase()
+        val normalizedPrefix = prefix.lowercase(java.util.Locale.ROOT)
         val startIdx = findNode(normalizedPrefix)
-        
-        if (startIdx < 0) return@withContext emptyList()
-        
-        val candidates = mutableListOf<AssociationCandidate>()
-        collectWords(startIdx, candidates)
-        
-        candidates.sortedBy { it.score }.take(topK)
+        val historicalWords = englishWordHistory.suggest(prefix, topK)
+        val historicalKeys = historicalWords.mapTo(mutableSetOf()) {
+            it.lowercase(java.util.Locale.ROOT)
+        }
+        val candidates = historicalWords.mapIndexed { index, word ->
+            AssociationCandidate(word, (topK - index).toFloat())
+        }.toMutableList()
+
+        if (startIdx >= 0 && candidates.size < topK) {
+            val builtInCandidates = mutableListOf<AssociationCandidate>()
+            collectWords(startIdx, builtInCandidates)
+            candidates.addAll(
+                builtInCandidates
+                    .sortedBy { it.score }
+                    .filterNot { it.text.lowercase(java.util.Locale.ROOT) in historicalKeys }
+                    .take(topK - candidates.size)
+            )
+        }
+        candidates.take(topK)
     }
+
+    fun recordInput(text: String): Boolean = englishWordHistory.recordText(text)
+
+    fun saveUserHistory() = englishWordHistory.save()
     
     private fun findNode(prefix: String): Int {
         var current = 0

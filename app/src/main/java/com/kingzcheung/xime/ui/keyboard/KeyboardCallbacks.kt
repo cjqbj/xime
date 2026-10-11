@@ -8,8 +8,8 @@ data class KeyboardCallbacks(
     val onKeyPress: (String, Boolean) -> Unit,
     val onKeyPressDown: ((String) -> Unit)? = null,
     val onKeyRelease: ((String) -> Unit)? = null,
-    val onCandidateSelect: (Int) -> Unit,
-    val onAssociationSelect: ((Int) -> Unit)? = null,
+    val onCandidateSelect: (Int, String) -> Unit,
+    val onAssociationSelect: ((Int, String) -> Unit)? = null,
     val onClearAssociation: (() -> Unit)? = null,
     // 长按用户自定义候选词的管理动作：word=词条，action="delete"|"moveEnd"
     val onCustomPhraseAction: ((String, String) -> Unit)? = null,

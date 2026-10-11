@@ -88,38 +88,23 @@ internal fun rememberImeKeyboardCallbacks(
             onKeyRelease = { key ->
                 service.feedbackManager.hapticFeedback(view, keyUp = true)
             },
-            onCandidateSelect = { index ->
-                service.keyRouter.selectCandidate(index)
+            onCandidateSelect = { index, candidate ->
+                service.keyRouter.selectCandidate(index, candidate)
             },
-            onAssociationSelect = { index ->
+            onAssociationSelect = { _, candidate ->
                 service.feedbackManager.performKeyPressEffect(view = view)
                 val cs = service.candidateState.value
-                val adjustedCandidates = if (cs.pendingEnglishText.isNotEmpty()) {
-                    listOf(cs.pendingEnglishText) + cs.associationCandidates
-                } else {
-                    cs.associationCandidates
-                }
-                if (index >= 0 && index < adjustedCandidates.size) {
-                    val text = adjustedCandidates[index]
-                    val pendingEnglish = cs.pendingEnglishText
+                val pendingEnglish = cs.pendingEnglishText
+                if (pendingEnglish.isEmpty() ||
+                    candidate.startsWith(pendingEnglish, ignoreCase = true)
+                ) {
+                    service.commitText(candidate)
                     if (pendingEnglish.isNotEmpty()) {
-                        if (index == 0 && text == pendingEnglish) {
-                            service.commitText(text)
-                            service.candidateState.value = service.candidateState.value.copy(
-                                pendingEnglishText = "",
-                                associationCandidates = emptyList()
-                            )
-                        } else {
-                            // 键入时已用 setComposingText 建立 composing region，
-                            // commitText 自然替换 composing 文本，终端也兼容。
-                            service.commitText(text)
-                            service.candidateState.value = service.candidateState.value.copy(
-                                pendingEnglishText = "",
-                                associationCandidates = emptyList()
-                            )
-                        }
+                        service.candidateState.value = service.candidateState.value.copy(
+                            pendingEnglishText = "",
+                            associationCandidates = emptyList()
+                        )
                     } else {
-                        service.commitText(text)
                         service.updateUI()
                     }
                 }

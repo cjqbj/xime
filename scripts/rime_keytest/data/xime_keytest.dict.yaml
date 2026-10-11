@@ -1,0 +1,22 @@
+# Rime dictionary
+# encoding: utf-8
+---
+name: xime_keytest
+version: "1"
+sort: by_weight
+...
+候选01	aa	12
+候选02	aa	11
+候选03	aa	10
+候选04	aa	9
+候选05	aa	8
+候选06	aa	7
+候选07	aa	6
+候选08	aa	5
+候选09	aa	4
+候选10	aa	3
+候选11	aa	2
+候选12	aa	1
+候选13	aa	15
+候选14	aa	14
+候选15	aa	13

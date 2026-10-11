@@ -570,12 +570,7 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
                         }
                         service.uiState.value = service.uiState.value.copy(isAsciiMode = capturedIsAscii)
                         if (pendingEnglish.isNotEmpty()) {
-                            service.serviceScope.launch {
-                                val candidates = service.predictionManager.getEnglishAssociations(pendingEnglish, PredictionManager.MAX_ASSOCIATION_COUNT)
-                                withContext(Dispatchers.Main) {
-                                    service.candidateState.value = service.candidateState.value.copy(associationCandidates = candidates)
-                                }
-                            }
+                            service.requestEnglishAssociations(pendingEnglish)
                         }
                         if (service.calculatorEngine.isActive()) {
                             updateCalculatorCandidates()
@@ -676,12 +671,7 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
                             associationCandidates = emptyList()
                         )
                     }
-                    service.serviceScope.launch {
-                        val candidates = service.predictionManager.getEnglishAssociations(newPending, PredictionManager.MAX_ASSOCIATION_COUNT)
-                        withContext(Dispatchers.Main) {
-                            service.candidateState.value = service.candidateState.value.copy(associationCandidates = candidates)
-                        }
-                    }
+                    service.requestEnglishAssociations(newPending)
                 } else {
                     withContext(Dispatchers.Main) {
                         service.sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
@@ -767,23 +757,31 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
         service.keyJobs.trySend(job)
     }
 
-    suspend fun selectCandidateAsync(index: Int) {
-        val selectedCandidate = if (index < service.candidateState.value.candidates.size) {
-            service.candidateState.value.candidates[index]
-        } else null
+    suspend fun selectCandidateAsync(index: Int, clickedCandidate: String? = null) {
+        val candState = service.candidateState.value
+        val indexedCandidate = candState.candidates.getOrNull(index)
+        val stateIndex = when {
+            clickedCandidate == null || indexedCandidate == clickedCandidate -> index
+            else -> candState.candidates.indexOf(clickedCandidate)
+        }
+        val hasCurrentCandidate = stateIndex in candState.candidates.indices
+        val effectiveIndex = if (hasCurrentCandidate) stateIndex else index
+        val selectedCandidate = clickedCandidate ?: indexedCandidate
 
         val isT9 = isT9Schema(service.uiState.value.currentSchemaId)
 
-        val candState = service.candidateState.value
         val frontCount = candState.customPhraseCount
         val tailCount = candState.demotedPhraseCount
         val totalCount = candState.candidates.size
-        val isFrontInject = !isT9 && frontCount > 0 && index in 0 until frontCount
+        val canSelectInjectedCandidate = clickedCandidate == null || hasCurrentCandidate
+        val isFrontInject = !isT9 && canSelectInjectedCandidate &&
+            frontCount > 0 && effectiveIndex in 0 until frontCount
         val tailStart = totalCount - tailCount
-        val isTailInject = !isT9 && tailCount > 0 && index in tailStart until totalCount
+        val isTailInject = !isT9 && canSelectInjectedCandidate &&
+            tailCount > 0 && effectiveIndex in tailStart until totalCount
         if (isFrontInject || isTailInject) {
             // 点击的是 app 层注入的自动学习词（前置或沉底）：直接上屏，不经过 rime 选词，也不重建会话。
-            val word = candState.candidates.getOrElse(index) { "" }
+            val word = candState.candidates.getOrElse(effectiveIndex) { "" }
             if (word.isNotEmpty()) {
                 // 记一次使用：分值 +1，沉底词被连选多次后可逐步回升到前排。
                 com.kingzcheung.xime.settings.UserPhraseManager.bumpAutoWordOnPick(
@@ -799,8 +797,10 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
             return
         }
 
-        val candidatePinyin = if (isT9 && index < service.candidateState.value.candidateComments.size) {
-            service.candidateState.value.candidateComments[index]
+        val candidatePinyin = if (isT9 && hasCurrentCandidate &&
+            effectiveIndex < candState.candidateComments.size
+        ) {
+            candState.candidateComments[effectiveIndex]
         } else null
 
         // 在 RIME 真正 select/commit 之前，先同步通知 T9 控制器消费数字。
@@ -829,13 +829,24 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
         val selectRimeOk = if (isT9) {
             true
         } else {
-            val baseIndex = (index - frontCount).coerceAtLeast(0)
-            val rimeIndex = if (selectedCandidate != null) {
-                resolveRimeCandidateIndex(baseIndex, selectedCandidate, service.rimeEngine.getCandidates().toList())
+            val baseIndex = (effectiveIndex - frontCount).coerceAtLeast(0)
+            val rawCandidates = service.rimeEngine.getCandidatesWithComments().toList()
+            val resolvedIndex = resolveRimeCandidateIndex(
+                baseIndex,
+                selectedCandidate,
+                rawCandidates.map { it.text }
+            )
+            val rimeIndex = if (resolvedIndex >= 0) resolvedIndex else baseIndex
+            val expectedComment = if (hasCurrentCandidate) {
+                candState.candidateComments.getOrNull(effectiveIndex)
             } else {
-                baseIndex
+                null
             }
-            service.rimeEngine.selectCandidate(rimeIndex)
+            service.rimeEngine.selectCandidate(
+                rimeIndex,
+                expectedText = selectedCandidate,
+                expectedComment = expectedComment
+            )
         }
         if (!selectRimeOk) return
 
@@ -1084,8 +1095,15 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
         }
     }
 
-    internal fun selectCandidate(index: Int) {
+    internal fun selectCandidate(index: Int, clickedCandidate: String? = null) {
         service.composeViewRef?.let { service.feedbackManager.performKeyPressEffect(view = it) }
+
+        val candState = service.candidateState.value
+        val indexedCandidate = candState.candidates.getOrNull(index)
+        val stateIndex = when {
+            clickedCandidate == null || indexedCandidate == clickedCandidate -> index
+            else -> candState.candidates.indexOf(clickedCandidate)
+        }
 
         // 计算器模式（仅在数字/常用符号键盘下生效，防止状态残留导致其他键盘候选词点击异常）
         val layoutState = service.keyboardViewModel.keyboardState.value
@@ -1099,7 +1117,7 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
                 val textToCommit: String
                 // index 0: 纯结果（如 "2"）
                 // index 1: 公式结果（如 "1+1=2"）
-                textToCommit = when (index) {
+                textToCommit = when (stateIndex) {
                     0 -> result
                     1 -> formulaResult
                     else -> ""
@@ -1121,17 +1139,20 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
             return
         }
         
-        if (service.candidateState.value.isShowingRecentClipboard && index >= 0 && index < service.recentClipboardItemsState.value.size) {
-            val text = service.recentClipboardItemsState.value[index].text
-            service.textCommit.selectClipboardItem(text)
-            service.candidateState.value = service.candidateState.value.copy(
-                isShowingRecentClipboard = false,
-                candidates = emptyList(),
-                candidateComments = emptyList()
-            )
+        if (candState.isShowingRecentClipboard) {
+            if (stateIndex in service.recentClipboardItemsState.value.indices) {
+                val text = service.recentClipboardItemsState.value[stateIndex].text
+                service.textCommit.selectClipboardItem(text)
+                service.candidateState.value = service.candidateState.value.copy(
+                    isShowingRecentClipboard = false,
+                    candidates = emptyList(),
+                    candidateComments = emptyList()
+                )
+            }
+            return
         } else {
             postRimeJob {
-                selectCandidateAsync(index)
+                selectCandidateAsync(index, clickedCandidate)
             }
         }
     }

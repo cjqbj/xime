@@ -62,7 +62,7 @@ fun buildT9DisplayState(
  * @param uiIndex 原始 fallback index
  * @param selectedCandidate 用户选中的候选词文本
  * @param rawCandidates RIME 原始候选词列表（字符串文本）
- * @return 原始候选词列表中匹配的 index，未找到则返回 [uiIndex]
+ * @return 原始候选词列表中匹配的 index，未找到返回 -1，避免错选同位置的其他候选
  */
 fun resolveRimeCandidateIndex(
     uiIndex: Int,
@@ -71,5 +71,5 @@ fun resolveRimeCandidateIndex(
 ): Int {
     if (selectedCandidate == null) return uiIndex
     val rawIndex = rawCandidates.indexOf(selectedCandidate)
-    return if (rawIndex >= 0) rawIndex else uiIndex
+    return rawIndex
 }

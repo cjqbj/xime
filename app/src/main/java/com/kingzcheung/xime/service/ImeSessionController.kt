@@ -136,12 +136,7 @@ internal class ImeSessionController(private val service: XimeInputMethodService)
         service.uiState.value = service.uiState.value.copy(isAsciiMode = isAsciiMode)
 
         if (!isAsciiMode && pendingEnglish.isNotEmpty()) {
-            service.serviceScope.launch {
-                val candidates = service.predictionManager.getEnglishAssociations(pendingEnglish, PredictionManager.MAX_ASSOCIATION_COUNT)
-                withContext(Dispatchers.Main) {
-                    service.candidateState.value = service.candidateState.value.copy(associationCandidates = candidates)
-                }
-            }
+            service.requestEnglishAssociations(pendingEnglish)
         }
 
         if (codeInInputBox) {
@@ -241,12 +236,7 @@ internal class ImeSessionController(private val service: XimeInputMethodService)
         service.uiState.value = service.uiState.value.copy(isAsciiMode = isAsciiMode)
         
         if (pendingEnglish.isNotEmpty()) {
-            service.serviceScope.launch {
-                val candidates = service.predictionManager.getEnglishAssociations(pendingEnglish, PredictionManager.MAX_ASSOCIATION_COUNT)
-                withContext(Dispatchers.Main) {
-                    service.candidateState.value = service.candidateState.value.copy(associationCandidates = candidates)
-                }
-            }
+            service.requestEnglishAssociations(pendingEnglish)
         }
 
         if (SettingsPreferences.getInputTextLocation(service) == SettingsPreferences.INPUT_TEXT_INPUT_BOX) {

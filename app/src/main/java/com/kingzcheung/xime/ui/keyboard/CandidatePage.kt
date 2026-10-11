@@ -51,8 +51,8 @@ data class CandidatePageState(
 )
 
 data class CandidatePageCallbacks(
-    val onCandidateSelect: (Int) -> Unit,
-    val onAssociationSelect: ((Int) -> Unit)? = null,
+    val onCandidateSelect: (Int, String) -> Unit,
+    val onAssociationSelect: ((Int, String) -> Unit)? = null,
     val onPageDown: (() -> Unit)? = null,
     val onPageUp: (() -> Unit)? = null,
     val onBack: (() -> Unit)? = null,
@@ -195,7 +195,7 @@ fun CandidatePage(
                                 CandidatePageItem(
                                     text = candidate,
                                     comment = state.candidateComments.getOrElse(index) { "" },
-                                    onClick = { callbacks.onCandidateSelect(index) },
+                                    onClick = { callbacks.onCandidateSelect(index, candidate) },
                                     textColor = state.textColor
                                 )
                             }
@@ -214,7 +214,7 @@ fun CandidatePage(
                                 CandidatePageItem(
                                     text = candidate,
                                     comment = "",
-                                    onClick = { callbacks.onAssociationSelect?.invoke(index) },
+                                    onClick = { callbacks.onAssociationSelect?.invoke(index, candidate) },
                                     textColor = state.textColor
                                 )
                             }

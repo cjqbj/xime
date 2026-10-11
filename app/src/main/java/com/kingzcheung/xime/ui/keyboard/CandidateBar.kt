@@ -78,14 +78,14 @@ data class CandidateBarVisuals(
 )
 
 data class CandidateBarCallbacks(
-    val onCandidateSelect: (Int) -> Unit,
+    val onCandidateSelect: (Int, String) -> Unit,
     val onLogoClick: (() -> Unit)? = null,
     val onBack: (() -> Unit)? = null,
     val onHideKeyboard: (() -> Unit)? = null,
     val onShowMoreCandidates: (() -> Unit)? = null,
     val onClearAssociation: (() -> Unit)? = null,
     val onInputTextClick: (() -> Unit)? = null,
-    val onAssociationSelect: ((Int) -> Unit)? = null,
+    val onAssociationSelect: ((Int, String) -> Unit)? = null,
     // 长按用户自定义候选词：word=词条文本，action="delete"|"moveEnd"
     val onCustomPhraseAction: ((word: String, action: String) -> Unit)? = null
 )
@@ -414,7 +414,7 @@ fun CandidateBar(
                         CandidateItem(
                             text = candidate,
                             index = index,
-                            onClick = { callbacks.onCandidateSelect(index) },
+                            onClick = { callbacks.onCandidateSelect(index, candidate) },
                             textColor = visuals.textColor,
                             comment = if (showComments) {
                                 when (val s = state) {
@@ -473,9 +473,9 @@ fun CandidateBar(
                         CandidateItem(
                             text = candidate,
                             index = -1,
-                            onClick = { callbacks.onAssociationSelect?.invoke(index) },
+                            onClick = { callbacks.onAssociationSelect?.invoke(index, candidate) },
                             textColor = visuals.textColor,
-                            comment = displayComments.getOrElse(index) { "" },
+                            comment = assocState?.comments?.getOrElse(index) { "" } ?: "",
                             isSelected = assocState?.highlightIndex == index,
                             accentColor = visuals.accentColor,
                             selectedTextColor = visuals.selectedTextColor,

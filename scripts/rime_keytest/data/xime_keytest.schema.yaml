@@ -1,0 +1,33 @@
+schema:
+  schema_id: xime_keytest
+  name: Xime key candidate test
+  version: "1"
+
+engine:
+  processors:
+    - ascii_composer
+    - key_binder
+    - speller
+    - selector
+    - navigator
+    - express_editor
+  segmentors:
+    - abc_segmentor
+    - fallback_segmentor
+  translators:
+    - script_translator
+
+speller:
+  alphabet: abc
+  max_code_length: 2
+
+translator:
+  dictionary: xime_keytest
+  enable_user_dict: false
+
+menu:
+  page_size: 5
+
+ascii_composer:
+  switch_key:
+    Shift_L: commit_code

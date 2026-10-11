@@ -40,6 +40,16 @@
 - [ ] 测试通过：`./gradlew test`
 - [ ] 已更新相关文档（如有需要）
 
+## 本地 Rime 按键/候选测试
+
+无需 Android 设备或模拟器。Linux 主机安装 `librime-dev`、`pkg-config` 和 C++17 编译器后运行：
+
+```bash
+./scripts/test_rime_keys.sh
+```
+
+该测试使用隔离的临时 Rime 用户目录和 15 个固定候选，验证键入、三页翻页、候选身份解析及点击后上屏文本。
+
 ## 提交信息格式
 
 ```

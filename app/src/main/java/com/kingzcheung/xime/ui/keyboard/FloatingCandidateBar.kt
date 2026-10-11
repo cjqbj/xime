@@ -31,7 +31,7 @@ fun FloatingCandidateBar(
     candidates: List<String>,
     candidateComments: List<String>,
     isComposing: Boolean,
-    onCandidateSelect: (Int) -> Unit,
+    onCandidateSelect: (Int, String) -> Unit,
     onDrag: (dx: Int, dy: Int) -> Unit
 ) {
     val dragModifier = Modifier.pointerInput(Unit) {
@@ -87,7 +87,7 @@ fun FloatingCandidateBar(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(Color(0xFF374151))
-                                .clickable { onCandidateSelect(index) }
+                                .clickable { onCandidateSelect(index, candidate) }
                                 .padding(horizontal = 14.dp, vertical = 6.dp)
                         ) {
                             Text(

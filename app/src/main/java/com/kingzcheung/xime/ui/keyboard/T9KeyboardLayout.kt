@@ -370,7 +370,7 @@ private fun T9LandscapeCandidatePanel(
                             index = index + 1,
                             text = candidate,
                             comment = rimeComments.getOrElse(index) { "" },
-                            onClick = { callbacks.onCandidateSelect(index) },
+                            onClick = { callbacks.onCandidateSelect(index, candidate) },
                             textColor = keyTextColor,
                         )
                     }

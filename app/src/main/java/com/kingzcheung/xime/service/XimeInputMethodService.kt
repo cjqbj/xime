@@ -649,6 +649,21 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
     private fun getPredictionFromPlugin(contextText: String) {
         predictionManager.getPrediction(contextText)
     }
+
+    internal fun requestEnglishAssociations(prefix: String) {
+        serviceScope.launch {
+            val candidates = predictionManager.getEnglishAssociations(
+                prefix,
+                PredictionManager.MAX_ASSOCIATION_COUNT
+            )
+            withContext(Dispatchers.Main) {
+                val current = candidateState.value
+                if (current.pendingEnglishText == prefix) {
+                    candidateState.value = current.copy(associationCandidates = candidates)
+                }
+            }
+        }
+    }
     
     private fun initRimeEngine() {
         Log.d(TAG, "initRimeEngine: Starting initialization...")

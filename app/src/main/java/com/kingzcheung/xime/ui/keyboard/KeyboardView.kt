@@ -431,15 +431,14 @@ fun KeyboardView(
                     isDarkTheme = state.isDarkTheme
                 ),
                 callbacks = CandidateBarCallbacks(
-                    onCandidateSelect = { index ->
+                    onCandidateSelect = { index, candidate ->
                         if (showHandwritingCandidates && index in handwritingCandidates.indices) {
-                            val ch = handwritingCandidates[index]
-                            callbacks.onCommitText?.invoke(ch)
+                            callbacks.onCommitText?.invoke(candidate)
                             handwritingCandidates = emptyList()
                             handwritingComments = emptyList()
                             handwritingClearSignal++
                         } else {
-                            callbacks.onCandidateSelect(index)
+                            callbacks.onCandidateSelect(index, candidate)
                         }
                     },
                     onClearAssociation = {
@@ -488,15 +487,16 @@ fun KeyboardView(
                             }
                         }
                     },
-                    onAssociationSelect = { index ->
-                        if (showHandwritingCandidates && index in handwritingCandidates.indices) {
-                            val ch = handwritingCandidates[index]
+                    onAssociationSelect = { index, candidate ->
+                        val handwritingIndex = handwritingCandidates.indexOf(candidate)
+                        if (showHandwritingCandidates && handwritingIndex >= 0) {
+                            val ch = handwritingCandidates[handwritingIndex]
                             callbacks.onCommitText?.invoke(ch)
                             handwritingCandidates = emptyList()
                             handwritingComments = emptyList()
                             handwritingClearSignal++
                         } else {
-                            callbacks.onAssociationSelect?.invoke(index)
+                            callbacks.onAssociationSelect?.invoke(index, candidate)
                         }
                     },
                     onCustomPhraseAction = { word, action ->
@@ -1097,12 +1097,12 @@ fun KeyboardView(
                             bottomPaddingDp = state.keyboardBottomPaddingDp,
                         ),
                         callbacks = CandidatePageCallbacks(
-                            onCandidateSelect = { index ->
-                                callbacks.onCandidateSelect(index)
+                            onCandidateSelect = { index, candidate ->
+                                callbacks.onCandidateSelect(index, candidate)
                                 viewModel.closeOverlay()
                             },
-                            onAssociationSelect = { index ->
-                                callbacks.onAssociationSelect?.invoke(index)
+                            onAssociationSelect = { index, candidate ->
+                                callbacks.onAssociationSelect?.invoke(index, candidate)
                                 viewModel.closeOverlay()
                             },
                             onPageDown = callbacks.onPageDown,
@@ -1197,5 +1197,3 @@ private fun VoiceStatusLabel(
         )
     }
 }
-
-
