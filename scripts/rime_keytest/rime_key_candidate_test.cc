@@ -2,6 +2,7 @@
 
 #include "rime_candidate_selection.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -25,10 +26,12 @@ void require(bool condition, const std::string& message) {
 }
 
 std::vector<Candidate> current_page(RimeApi* api, RimeSessionId session,
-                                    int* page_no, bool* is_last_page) {
+                                    int* page_no, int* page_size,
+                                    bool* is_last_page) {
   RIME_STRUCT(RimeContext, context);
   require(api->get_context(session, &context), "Rime returned no context");
   *page_no = context.menu.page_no;
+  *page_size = context.menu.page_size;
   *is_last_page = context.menu.is_last_page;
 
   std::vector<Candidate> candidates;
@@ -41,9 +44,11 @@ std::vector<Candidate> current_page(RimeApi* api, RimeSessionId session,
   return candidates;
 }
 
-void type_query(RimeApi* api, RimeSessionId session) {
-  require(api->process_key(session, 'a', 0), "Rime rejected key 'a'");
-  require(api->process_key(session, 'a', 0), "Rime rejected second key 'a'");
+void type_query(RimeApi* api, RimeSessionId session, const std::string& query) {
+  for (const char key : query) {
+    require(api->process_key(session, key, 0),
+            "Rime rejected query key");
+  }
 }
 
 void verify_identity_resolution() {
@@ -61,13 +66,15 @@ void verify_identity_resolution() {
 void verify_page_selection(RimeApi* api, RimeSessionId session,
                            int expected_page) {
   api->clear_composition(session);
-  type_query(api, session);
+  type_query(api, session, "aa");
 
   int first_page_no = -1;
+  int page_size = 0;
   bool first_page_last = false;
   const auto first_page =
-      current_page(api, session, &first_page_no, &first_page_last);
+      current_page(api, session, &first_page_no, &page_size, &first_page_last);
   require(first_page_no == 0, "Rime did not start on page zero");
+  require(page_size == 5, "Unexpected Rime page size");
 
   for (int page = 0; page < expected_page; ++page) {
     require(api->process_key(session, 0xff56, 0),
@@ -75,9 +82,12 @@ void verify_page_selection(RimeApi* api, RimeSessionId session,
   }
 
   int page_no = -1;
+  int current_page_size = 0;
   bool is_last_page = false;
-  const auto candidates = current_page(api, session, &page_no, &is_last_page);
+  const auto candidates =
+      current_page(api, session, &page_no, &current_page_size, &is_last_page);
   require(page_no == expected_page, "Rime did not move to the requested page");
+  require(current_page_size == page_size, "Rime page size changed");
   require(candidates.size() == 5, "Unexpected candidate count on page");
   require((expected_page == 2) == is_last_page,
           "Rime reported an incorrect last-page state");
@@ -96,12 +106,43 @@ void verify_page_selection(RimeApi* api, RimeSessionId session,
             "A stale candidate from page one matched a later page");
   }
 
-  require(api->select_candidate_on_current_page(session, resolved_index),
-          "Rime rejected the selected candidate on the current page");
+  const size_t absolute_index =
+      static_cast<size_t>(page_no * current_page_size + resolved_index);
+  require(api->select_candidate(session, absolute_index),
+          "Rime rejected the selected candidate by absolute index");
   RIME_STRUCT(RimeCommit, commit);
   require(api->get_commit(session, &commit), "Rime did not produce a commit");
   require(clicked_candidate.first == (commit.text ? commit.text : ""),
           "Rime committed a different candidate than the clicked item");
+  api->free_commit(&commit);
+}
+
+void verify_fu_second_page_selection(RimeApi* api, RimeSessionId session) {
+  api->clear_composition(session);
+  type_query(api, session, "fu");
+  require(api->process_key(session, 0xff56, 0),
+          "Rime rejected Page_Down for fu");
+
+  int page_no = -1;
+  int page_size = 0;
+  bool is_last_page = false;
+  const auto candidates =
+      current_page(api, session, &page_no, &page_size, &is_last_page);
+  require(page_no == 1, "fu did not move to its second page");
+  const auto clicked = std::find_if(
+      candidates.begin(), candidates.end(),
+      [](const Candidate& candidate) { return candidate.first == "芙"; });
+  require(clicked != candidates.end(), "芙 was not on fu's second page");
+  const int local_index = static_cast<int>(clicked - candidates.begin());
+  const size_t absolute_index =
+      static_cast<size_t>(page_no * page_size + local_index);
+
+  require(api->select_candidate(session, absolute_index),
+          "Rime rejected the fu second-page candidate");
+  RIME_STRUCT(RimeCommit, commit);
+  require(api->get_commit(session, &commit), "Rime did not commit 芙");
+  require(std::string(commit.text ? commit.text : "") == "芙",
+          "Selecting fu second-page 芙 committed a different candidate");
   api->free_commit(&commit);
 }
 
@@ -145,6 +186,7 @@ int main(int argc, char** argv) {
     verify_page_selection(api, session, 0);
     verify_page_selection(api, session, 1);
     verify_page_selection(api, session, 2);
+    verify_fu_second_page_selection(api, session);
 
     api->destroy_session(session);
     std::cout << "PASS: key input, three-page candidate navigation, and "

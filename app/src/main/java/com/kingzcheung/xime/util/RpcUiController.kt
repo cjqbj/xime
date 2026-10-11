@@ -27,8 +27,12 @@ object RpcUiController {
         fun type(code: String): String
         /** 真实敲入一个字符（processKey 单键管线），返回状态 JSON。 */
         fun pressKey(letter: String): String
-        /** 点击第 index 个候选（走 selectCandidateAsync 生产路径），返回 {before,after}。 */
-        fun pick(index: Int): String
+        /** 点击候选（走 selectCandidateAsync 生产路径），返回前后状态和实际上屏文本。 */
+        fun pick(index: Int, expectedCandidate: String?): String
+        /** 翻到 Rime 下一页并返回候选状态。 */
+        fun pageDown(): String
+        /** 翻到 Rime 上一页并返回候选状态。 */
+        fun pageUp(): String
         /** 清空组合与候选栏，返回状态 JSON。 */
         fun reset(): String
         /** 只读当前完整输入/候选状态 JSON。 */
@@ -243,9 +247,22 @@ object RpcUiController {
         return imeBridge?.pressKey(letter) ?: imeUnavailable()
     }
 
-    /** RPC：点击候选（索引即候选栏顺序），如 RpcUiController.imePick(5)，返回前后状态。 */
+    /** RPC：按当前候选栏索引选词。 */
     @JvmStatic
-    fun imePick(index: Int): String = imeBridge?.pick(index) ?: imeUnavailable()
+    fun imePick(index: Int): String = imeBridge?.pick(index, null) ?: imeUnavailable()
+
+    /** RPC：按索引和候选词身份选词，用于复现 UI 点击路径。 */
+    @JvmStatic
+    fun imePick(index: Int, expectedCandidate: String): String =
+        imeBridge?.pick(index, expectedCandidate) ?: imeUnavailable()
+
+    /** RPC：翻到 Rime 下一页。 */
+    @JvmStatic
+    fun imePageDown(): String = imeBridge?.pageDown() ?: imeUnavailable()
+
+    /** RPC：翻到 Rime 上一页。 */
+    @JvmStatic
+    fun imePageUp(): String = imeBridge?.pageUp() ?: imeUnavailable()
 
     /** RPC：清空组合与候选栏。 */
     @JvmStatic

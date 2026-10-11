@@ -456,6 +456,8 @@ public:
             RIME_STRUCT(RimeContext, context);
             if (!rime->get_context(session_id_, &context)) return false;
 
+            const int pageNo = context.menu.page_no;
+            const int pageSize = context.menu.page_size;
             std::vector<std::pair<std::string, std::string>> candidates;
             candidates.reserve(context.menu.num_candidates);
             for (int i = 0; i < context.menu.num_candidates; ++i) {
@@ -470,7 +472,11 @@ public:
             index = xime::resolveCandidateIndex(
                 candidates, index, expectedText, expectedComment
             );
-            if (index < 0) return false;
+            if (index < 0 || pageNo < 0 || pageSize <= 0) return false;
+            const size_t absoluteIndex =
+                static_cast<size_t>(pageNo) * static_cast<size_t>(pageSize) +
+                static_cast<size_t>(index);
+            return rime->select_candidate(session_id_, absoluteIndex);
         }
         return rime->select_candidate_on_current_page(session_id_, index);
     }

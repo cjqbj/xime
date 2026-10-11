@@ -372,6 +372,12 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
             .put("has_prev", cs.hasPrevPage)
     }
 
+    @Volatile
+    private var captureImeTestCommit = false
+
+    @Volatile
+    private var imeTestCommittedText = ""
+
     /** RpcUiController 用的输入/候选直达测试桥实现。 */
     internal val imeTestBridge = object : com.kingzcheung.xime.util.RpcUiController.ImeTestBridge {
         override fun type(code: String): String = runSerialImeTest {
@@ -386,14 +392,44 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
             buildImeSnapshot().put("processed", result.processed).toString()
         }
 
-        override fun pick(index: Int): String = runSerialImeTest {
+        override fun pick(index: Int, expectedCandidate: String?): String = runSerialImeTest {
             val before = buildImeSnapshot()
-            keyRouter.selectCandidateAsync(index)
+            val candidates = before.optJSONArray("candidates")
+            if (index !in 0 until (candidates?.length() ?: 0)) {
+                return@runSerialImeTest org.json.JSONObject()
+                    .put("error", "candidate_index_out_of_range")
+                    .put("before", before)
+                    .toString()
+            }
+            val selectedCandidate =
+                expectedCandidate ?: candidates!!.optString(index)
+            imeTestCommittedText = ""
+            captureImeTestCommit = true
+            try {
+                keyRouter.selectCandidateAsync(index, selectedCandidate)
+            } finally {
+                captureImeTestCommit = false
+            }
             val after = buildImeSnapshot()
             org.json.JSONObject()
                 .put("before", before)
+                .put("selected_candidate", selectedCandidate)
+                .put("committed_text", imeTestCommittedText)
+                .put("selection_matches", imeTestCommittedText == selectedCandidate)
                 .put("after", after)
                 .toString()
+        }
+
+        override fun pageDown(): String = runSerialImeTest {
+            val moved = rimeEngine.pageDown()
+            sessionController.applyComposition(rimeEngine.getComposition())
+            buildImeSnapshot().put("page_down_ok", moved).toString()
+        }
+
+        override fun pageUp(): String = runSerialImeTest {
+            val moved = rimeEngine.pageUp()
+            sessionController.applyComposition(rimeEngine.getComposition())
+            buildImeSnapshot().put("page_up_ok", moved).toString()
         }
 
         override fun reset(): String = runSerialImeTest {
@@ -1940,6 +1976,7 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
     }
 
     override fun commitText(text: String) {
+        if (captureImeTestCommit) imeTestCommittedText = text
         // 剪贴板历史搜索态：RIME 上屏（拼音候选/空格首选/标点/英文键）一律重定向到搜索框，
         // 绝不写入宿主输入框；同时跳过联想学习，避免搜索词污染用户语言模型。
         if (uiState.value.clipboardSearchActive) {

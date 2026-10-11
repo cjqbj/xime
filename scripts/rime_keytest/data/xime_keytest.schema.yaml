@@ -18,7 +18,7 @@ engine:
     - script_translator
 
 speller:
-  alphabet: abc
+  alphabet: abcdefghijklmnopqrstuvwxyz
   max_code_length: 2
 
 translator:
