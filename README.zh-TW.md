@@ -128,6 +128,8 @@ git submodule update --init --recursive
 ./gradlew assembleRelease
 ```
 
+一般 APK 構建只負責構建，不會自動執行 Rime 按鍵/候選測試。若修改了按鍵映射、翻頁或候選選擇，請在 Linux 主機上按需手動執行 `./scripts/test_rime_keys.sh`；不需要 Android 裝置。測試範圍及其限制請見[候選翻頁排障文件](docs/rime-candidate-debugging.md)。
+
 ### AI 模型下載
 
 #### 智慧聯想詞模型

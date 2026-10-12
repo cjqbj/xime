@@ -519,7 +519,7 @@ private fun PermissionRequestPanel(onNavigateToPermissions: () -> Unit) {
             subtitle = "在运行日志输出 gms.mqtt_net.stats.get_report() 连接质量报告",
             onClick = {
                 // 点击瞬间先在日志窗口给即时反馈，避免 Python 取模块/采集期间界面无响应感
-                RpcUiController.appendLog("[MQTT] 正在采集链路统计报告……\n")
+                RpcUiController.appendLog("\n[MQTT] 正在采集链路统计报告……\n")
                 coroutineScope.launch(Dispatchers.IO) {
                     try {
                         Python.getInstance()

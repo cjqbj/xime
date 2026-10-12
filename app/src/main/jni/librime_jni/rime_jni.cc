@@ -446,6 +446,16 @@ public:
         }
     }
 
+    bool getCandidatePageInfo(int& pageNo, int& pageSize) {
+        if (!rime || !session_id_) return false;
+        RIME_STRUCT(RimeContext, context);
+        if (!rime->get_context(session_id_, &context)) return false;
+        pageNo = context.menu.page_no;
+        pageSize = context.menu.page_size;
+        rime->free_context(&context);
+        return true;
+    }
+
     bool selectCandidate(
         int index,
         const std::string* expectedText = nullptr,
@@ -1326,6 +1336,20 @@ Java_com_kingzcheung_xime_rime_RimeEngine_nativeGetCandidatesWithComments(
         env->DeleteLocalRef(pair);
     }
     
+    return result;
+}
+
+JNIEXPORT jintArray JNICALL
+Java_com_kingzcheung_xime_rime_RimeEngine_nativeGetCandidatePageInfo(
+    JNIEnv* env,
+    jobject thiz
+) {
+    int pageNo = -1;
+    int pageSize = 0;
+    Rime::Instance().getCandidatePageInfo(pageNo, pageSize);
+    jint values[] = {pageNo, pageSize};
+    jintArray result = env->NewIntArray(2);
+    if (result) env->SetIntArrayRegion(result, 0, 2, values);
     return result;
 }
 

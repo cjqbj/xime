@@ -357,26 +357,35 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
         cs.candidates.forEach { candidatesArray.put(it) }
         val commentsArray = org.json.JSONArray()
         cs.candidateComments.forEach { commentsArray.put(it) }
+        val rimeCandidatesArray = org.json.JSONArray()
+        rimeEngine.getCandidatesWithComments().forEach { candidate ->
+            rimeCandidatesArray.put(
+                org.json.JSONObject()
+                    .put("text", candidate.text)
+                    .put("comment", candidate.comment)
+            )
+        }
+        val pageInfo = rimeEngine.getCandidatePageInfo()
         return org.json.JSONObject()
             .put("schema", ui.currentSchemaId)
+            .put("schema_name", ui.schemaName)
             .put("ascii", ui.isAsciiMode)
+            .put("keyboard_layout", keyboardViewModel.keyboardState.value.toString())
+            .put("rime_initialized", RimeEngine.isInitialized())
             .put("composing", cs.isComposing)
             .put("input", cs.inputText)
             .put("raw_input", rimeEngine.getInput())
             .put("preedit", cs.preeditText)
             .put("candidates", candidatesArray)
             .put("comments", commentsArray)
+            .put("rime_candidates", rimeCandidatesArray)
+            .put("page_no", pageInfo.pageNo)
+            .put("page_size", pageInfo.pageSize)
             .put("front", cs.customPhraseCount)
             .put("tail", cs.demotedPhraseCount)
             .put("has_next", cs.hasNextPage)
             .put("has_prev", cs.hasPrevPage)
     }
-
-    @Volatile
-    private var captureImeTestCommit = false
-
-    @Volatile
-    private var imeTestCommittedText = ""
 
     /** RpcUiController 用的输入/候选直达测试桥实现。 */
     internal val imeTestBridge = object : com.kingzcheung.xime.util.RpcUiController.ImeTestBridge {
@@ -403,19 +412,16 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
             }
             val selectedCandidate =
                 expectedCandidate ?: candidates!!.optString(index)
-            imeTestCommittedText = ""
-            captureImeTestCommit = true
-            try {
-                keyRouter.selectCandidateAsync(index, selectedCandidate)
-            } finally {
-                captureImeTestCommit = false
-            }
+            val outcome = keyRouter.selectCandidateAsync(index, selectedCandidate)
             val after = buildImeSnapshot()
             org.json.JSONObject()
                 .put("before", before)
                 .put("selected_candidate", selectedCandidate)
-                .put("committed_text", imeTestCommittedText)
-                .put("selection_matches", imeTestCommittedText == selectedCandidate)
+                .put("selection_accepted", outcome.accepted)
+                .put("rime_commit_text", outcome.rimeCommitText)
+                .put("committed_text", outcome.committedText ?: "")
+                .put("fallback_used", outcome.fallbackUsed)
+                .put("selection_matches", outcome.committedText == selectedCandidate)
                 .put("after", after)
                 .toString()
         }
@@ -580,6 +586,11 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
         loadDarkModePreference()
         registerSharedPrefsListener()
         setupFloatingVoiceLabel()
+        val savedSchema = SettingsPreferences.getCurrentSchema(this)
+        uiState.value = uiState.value.copy(
+            currentSchemaId = savedSchema,
+            schemaName = SchemaManager.getSchemaDisplayName(this, savedSchema) ?: savedSchema
+        )
         
         initRimeEngine()
         
@@ -1976,7 +1987,6 @@ class XimeInputMethodService : InputMethodService(), LifecycleOwner, SavedStateR
     }
 
     override fun commitText(text: String) {
-        if (captureImeTestCommit) imeTestCommittedText = text
         // 剪贴板历史搜索态：RIME 上屏（拼音候选/空格首选/标点/英文键）一律重定向到搜索框，
         // 绝不写入宿主输入框；同时跳过联想学习，避免搜索词污染用户语言模型。
         if (uiState.value.clipboardSearchActive) {

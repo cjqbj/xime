@@ -18,7 +18,7 @@ Closes #（填写关联 issue 号）
 ## 自测清单
 
 - [ ] 代码编译通过
-- [ ] 已运行 `./gradlew test` 并通过
+- [ ] 若改动涉及 Rime 按键或候选翻页，已手动运行 `./scripts/test_rime_keys.sh`
 - [ ] 已在真机/模拟器上验证
 
 ## 备注

@@ -1,4 +1,5 @@
 import com.android.build.gradle.internal.api.BaseVariantOutputImpl
+import java.security.MessageDigest
 import java.util.Base64
 import java.util.Properties
 
@@ -40,6 +41,36 @@ fun getGitHash(): String {
     } catch (e: Exception) {
         "unknown"
     }
+}
+
+fun getSourceFingerprint(): String {
+    val sourceRoots = listOf(
+        file("src/main/java"),
+        file("src/main/jni/librime_jni"),
+        file("src/main/python"),
+        file("src/main/assets"),
+        file("src/main/res"),
+        file("src/main/AndroidManifest.xml"),
+    )
+    val sourceFiles = sourceRoots
+        .flatMap { root ->
+            if (root.isFile) listOf(root) else root.walkTopDown().filter { it.isFile }.toList()
+        }
+        .sortedBy { it.relativeTo(rootProject.projectDir).invariantSeparatorsPath }
+    val digest = MessageDigest.getInstance("SHA-256")
+    sourceFiles.forEach { source ->
+        digest.update(source.relativeTo(rootProject.projectDir).invariantSeparatorsPath.toByteArray(Charsets.UTF_8))
+        digest.update(0.toByte())
+        source.inputStream().use { input ->
+            val buffer = ByteArray(8192)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+    }
+    return digest.digest().joinToString("") { it.toInt().and(0xff).toString(16).padStart(2, '0') }
 }
 
 val supportedAbis = listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
@@ -100,6 +131,7 @@ android {
 
         // 构建信息
         buildConfigField("String", "GIT_HASH", "\"${getGitHash()}\"")
+        buildConfigField("String", "SOURCE_FINGERPRINT", "\"${getSourceFingerprint()}\"")
     }
 
     signingConfigs {

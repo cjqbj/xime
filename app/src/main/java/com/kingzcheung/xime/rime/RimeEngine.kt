@@ -9,6 +9,11 @@ data class RimeCandidate(
     val comment: String
 )
 
+data class RimeCandidatePageInfo(
+    val pageNo: Int,
+    val pageSize: Int,
+)
+
 /**
  * 批量查询当前 composition 状态。
  *
@@ -311,6 +316,17 @@ class RimeEngine {
                     comment = pair.getOrElse(1) { "" }
                 )
             }.toTypedArray()
+        }
+    }
+
+    fun getCandidatePageInfo(): RimeCandidatePageInfo {
+        return tryLocked(RimeCandidatePageInfo(-1, 0)) {
+            if (!nativeHasSession()) return@tryLocked RimeCandidatePageInfo(-1, 0)
+            val pageInfo = nativeGetCandidatePageInfo() ?: return@tryLocked RimeCandidatePageInfo(-1, 0)
+            RimeCandidatePageInfo(
+                pageNo = pageInfo.getOrElse(0) { -1 },
+                pageSize = pageInfo.getOrElse(1) { 0 },
+            )
         }
     }
 
@@ -679,6 +695,7 @@ class RimeEngine {
     private external fun nativeGetProcessResult(processed: Boolean): RimeProcessResult
     private external fun nativeGetCandidates(): Array<String>?
     private external fun nativeGetCandidatesWithComments(): Array<Array<String>>?
+    private external fun nativeGetCandidatePageInfo(): IntArray?
     private external fun nativeGetInput(): String?
     private external fun nativeGetComposition(): RimeComposition
     private external fun nativeSelectCandidate(

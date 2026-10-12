@@ -129,11 +129,28 @@ void verify_fu_second_page_selection(RimeApi* api, RimeSessionId session) {
   const auto candidates =
       current_page(api, session, &page_no, &page_size, &is_last_page);
   require(page_no == 1, "fu did not move to its second page");
+  require(std::any_of(candidates.begin(), candidates.end(),
+                      [](const Candidate& candidate) {
+                        return candidate.first == "芙";
+                      }),
+          "芙 was not on fu's second page");
+
+  require(api->set_input(session, "f"), "Rime rejected the prefix probe");
+  require(api->set_input(session, "fu"), "Rime rejected restoring fu");
+  current_page(api, session, &page_no, &page_size, &is_last_page);
+  require(page_no == 0, "set_input did not reset the candidate page");
+  require(api->process_key(session, 0xff56, 0),
+          "Rime rejected restoring fu page two");
+  const auto restored_candidates =
+      current_page(api, session, &page_no, &page_size, &is_last_page);
+  require(page_no == 1, "fu candidate page was not restored after set_input");
   const auto clicked = std::find_if(
-      candidates.begin(), candidates.end(),
+      restored_candidates.begin(), restored_candidates.end(),
       [](const Candidate& candidate) { return candidate.first == "芙"; });
-  require(clicked != candidates.end(), "芙 was not on fu's second page");
-  const int local_index = static_cast<int>(clicked - candidates.begin());
+  require(clicked != restored_candidates.end(),
+          "芙 disappeared after restoring fu page two");
+  const int local_index =
+      static_cast<int>(clicked - restored_candidates.begin());
   const size_t absolute_index =
       static_cast<size_t>(page_no * page_size + local_index);
 

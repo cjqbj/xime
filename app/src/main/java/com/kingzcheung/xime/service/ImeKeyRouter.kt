@@ -24,6 +24,13 @@ import kotlinx.coroutines.withContext
  * 所有共享状态通过 service 引用访问（同模块 internal 成员）。
  */
 internal class ImeKeyRouter(private val service: XimeInputMethodService) {
+    internal data class CandidateSelectionOutcome(
+        val accepted: Boolean,
+        val rimeCommitText: String,
+        val committedText: String?,
+        val fallbackUsed: Boolean = false,
+    )
+
     internal fun handleKeyPress(key: String, isShifted: Boolean) {
         InputHistoryRecorder.record(service, key, isShifted)
         if (service.uiState.value.quickSendFormFocused) {
@@ -316,6 +323,7 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
                     val state = service.uiState.value
                     val optimisticTarget = !state.isAsciiMode
                     val schemaId = service.rimeEngine.getCurrentSchema()
+                        .ifBlank { state.currentSchemaId.ifBlank { SettingsPreferences.getCurrentSchema(service) } }
                     withContext(Dispatchers.Main) {
                         service.uiState.value = service.uiState.value.copy(isAsciiMode = optimisticTarget)
                         service.keyboardViewModel.dispatch(
@@ -329,9 +337,9 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
                     if (!service.schemaController.switchInputMethod()) {
                         // 引擎不可用：回滚乐观状态
                         withContext(Dispatchers.Main) {
-                            service.uiState.value = service.uiState.value.copy(isAsciiMode = optimisticTarget)
+                            service.uiState.value = service.uiState.value.copy(isAsciiMode = state.isAsciiMode)
                             service.keyboardViewModel.dispatch(
-                                com.kingzcheung.xime.ui.keyboard.KeyboardDispatchAction.AsciiModeChanged(optimisticTarget, schemaId)
+                                com.kingzcheung.xime.ui.keyboard.KeyboardDispatchAction.AsciiModeChanged(state.isAsciiMode, schemaId)
                             )
                         }
                     }
@@ -757,7 +765,10 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
         service.keyJobs.trySend(job)
     }
 
-    suspend fun selectCandidateAsync(index: Int, clickedCandidate: String? = null) {
+    suspend fun selectCandidateAsync(
+        index: Int,
+        clickedCandidate: String? = null
+    ): CandidateSelectionOutcome {
         val candState = service.candidateState.value
         val indexedCandidate = candState.candidates.getOrNull(index)
         val stateIndex = when {
@@ -794,7 +805,11 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
                 service.candidateState.value = CandidateState()
                 service.endComposingInputBox()
             }
-            return
+            return CandidateSelectionOutcome(
+                accepted = word.isNotEmpty(),
+                rimeCommitText = "",
+                committedText = if (word.isEmpty()) null else word,
+            )
         }
 
         val candidatePinyin = if (isT9 && hasCurrentCandidate &&
@@ -816,9 +831,15 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
         // 非 T9：尾部若带有 rime 无法成词的悬空字母（hgi 的尾码 i），直接在原串上
         // selectCandidate 会把 rime 会话毒化为“无候选、不提交”（[confirmed, phony] 残留）。
         // 故在选词【之前】先用 setInput 探测剥掉悬空尾码，再干净选词上屏并追加尾码字面量。
-        if (!isT9 && selectedCandidate != null &&
-            trimDanglingTailAndPick(selectedCandidate)) {
-            return
+        if (!isT9 && selectedCandidate != null) {
+            val danglingTailCommit = trimDanglingTailAndPick(selectedCandidate)
+            if (danglingTailCommit != null) {
+                return CandidateSelectionOutcome(
+                    accepted = true,
+                    rimeCommitText = danglingTailCommit,
+                    committedText = danglingTailCommit,
+                )
+            }
         }
 
         // T9：跳过 service.rimeEngine.selectCandidate，消费已由 T9 处理器（t9_processor）
@@ -826,17 +847,18 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
         // 导致后续 forceSendToRime 的 setInput 无法正常重建候选项（对齐 main 分支）。
         // 非 T9 才调用 selectCandidate，并用 resolveRimeCandidateIndex 修正候选 index，
         // 避免 UI 候选被过滤/重排后上屏错词。
+        var resolvedRimeIndex = -1
         val selectRimeOk = if (isT9) {
             true
         } else {
             val baseIndex = (effectiveIndex - frontCount).coerceAtLeast(0)
             val rawCandidates = service.rimeEngine.getCandidatesWithComments().toList()
-            val resolvedIndex = resolveRimeCandidateIndex(
+            resolvedRimeIndex = resolveRimeCandidateIndex(
                 baseIndex,
                 selectedCandidate,
                 rawCandidates.map { it.text }
             )
-            val rimeIndex = if (resolvedIndex >= 0) resolvedIndex else baseIndex
+            val rimeIndex = if (resolvedRimeIndex >= 0) resolvedRimeIndex else baseIndex
             val expectedComment = if (hasCurrentCandidate) {
                 candState.candidateComments.getOrNull(effectiveIndex)
             } else {
@@ -848,10 +870,20 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
                 expectedComment = expectedComment
             )
         }
-        if (!selectRimeOk) return
+        if (!selectRimeOk) {
+            if (!isT9 && selectedCandidate != null && resolvedRimeIndex >= 0) {
+                return commitVerifiedCandidate(selectedCandidate)
+            }
+            return CandidateSelectionOutcome(false, "", null)
+        }
 
         // T9：跳过 service.rimeEngine.commit()，用用户点选的 selectedCandidate 作为权威上屏文本。
         val committedText = if (isT9) "" else service.rimeEngine.commit()
+        if (!isT9 && selectedCandidate != null && resolvedRimeIndex >= 0 &&
+            committedText != selectedCandidate
+        ) {
+            return commitVerifiedCandidate(selectedCandidate, committedText)
+        }
         // T9 模式下 fullyConsumed 是判断 full/partial commit 的唯一权威：
         // 当控制器明确 partial commit 时，即使 RIME commit() 返回非空文本
         // （RIME 内部做了 partial commit），也不应走 full commit 路径。
@@ -860,6 +892,7 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
         } else {
             committedText.isNotEmpty()
         }
+
         if (isFullCommit) {
             if (SettingsPreferences.isSmartPredictionEnabled(service) && selectedCandidate != null && AssociationManager.isInitialized()) {
                 if (service.predictionManager.lastCommittedText.isNotEmpty()) {
@@ -928,6 +961,11 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
             // T9 跳过了 service.rimeEngine.commit()，需显式清除 RIME composition，
             // 防止残留状态影响后续输入（在 service.keyProcessingDispatcher 上执行）。
             if (isT9) service.rimeEngine.clearComposition()
+            return CandidateSelectionOutcome(
+                accepted = true,
+                rimeCommitText = committedText,
+                committedText = fullCommitText,
+            )
         } else {
             withContext(Dispatchers.Main) {
                 if (isT9) {
@@ -949,7 +987,34 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
                     service.updateUI()
                 }
             }
+            return CandidateSelectionOutcome(
+                accepted = true,
+                rimeCommitText = committedText,
+                committedText = null,
+            )
         }
+    }
+
+    private suspend fun commitVerifiedCandidate(
+        candidate: String,
+        rimeCommitText: String = "",
+    ): CandidateSelectionOutcome {
+        FileLogger.w(
+            "ImeKeyRouter",
+            "Rime candidate selection/commit mismatch; committing verified displayed candidate directly"
+        )
+        service.rimeEngine.clearComposition()
+        withContext(Dispatchers.Main) {
+            service.commitText(candidate)
+            service.candidateState.value = CandidateState()
+            service.endComposingInputBox()
+        }
+        return CandidateSelectionOutcome(
+            accepted = true,
+            rimeCommitText = rimeCommitText,
+            committedText = candidate,
+            fallbackUsed = true,
+        )
     }
 
     /**
@@ -967,12 +1032,27 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
         val c = service.rimeEngine.getCandidates()
         return c.joinToString("|") + "#" +
             service.rimeEngine.hasNextPage() + "#" +
-            service.rimeEngine.hasPrevPage()
+            service.rimeEngine.hasPrevPage() + "#" +
+            service.rimeEngine.getCandidatePageInfo().pageNo
     }
 
-    private suspend fun trimDanglingTailAndPick(word: String): Boolean {
+    private fun restoreCandidatePage(pageNo: Int): Boolean {
+        if (pageNo < 0) return false
+        var currentPage = service.rimeEngine.getCandidatePageInfo().pageNo
+        while (currentPage in 0 until pageNo) {
+            if (!service.rimeEngine.pageDown()) return false
+            val nextPage = service.rimeEngine.getCandidatePageInfo().pageNo
+            if (nextPage <= currentPage) return false
+            currentPage = nextPage
+        }
+        return currentPage == pageNo
+    }
+
+    private suspend fun trimDanglingTailAndPick(word: String): String? {
         val original = service.rimeEngine.getInput()
-        if (original.isEmpty()) return false
+        if (original.isEmpty()) return null
+        val originalPageNo = service.rimeEngine.getCandidatePageInfo().pageNo
+        if (originalPageNo < 0) return null
         var s = original
         var tail = ""
         while (s.length > 1) {
@@ -981,6 +1061,11 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
             // 会话当前停在 s，先取其菜单签名；再重建到去尾前缀 candidate。
             val curSig = liveMenuSignature()
             service.rimeEngine.setInput(candidate)
+            if (!restoreCandidatePage(originalPageNo)) {
+                service.rimeEngine.setInput(original)
+                restoreCandidatePage(originalPageNo)
+                return null
+            }
             val preSig = liveMenuSignature()
             // 去尾前后菜单完全一致 ⇒ 该字母对 rime 毫无贡献，是悬空尾码（hgi 的 i）；
             // 菜单一旦变化（哪怕仅顺序或补全词不同）说明字母在被消费的音节内，立即停止（nihao 的 ao）。
@@ -993,19 +1078,27 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
         }
         if (tail.isEmpty()) {
             service.rimeEngine.setInput(original)
-            return false
+            restoreCandidatePage(originalPageNo)
+            return null
         }
         // 最后一次失败探测会把会话留在更短串上，这里显式重建到可干净选词的前缀 s。
         service.rimeEngine.setInput(s)
+        if (!restoreCandidatePage(originalPageNo)) {
+            service.rimeEngine.setInput(original)
+            restoreCandidatePage(originalPageNo)
+            return null
+        }
         val rimeIndex = service.rimeEngine.getCandidates().indexOfFirst { it == word }
         if (rimeIndex < 0 || !service.rimeEngine.selectCandidate(rimeIndex)) {
             service.rimeEngine.setInput(original)
-            return false
+            restoreCandidatePage(originalPageNo)
+            return null
         }
         val committed = service.rimeEngine.commit()
         if (committed.isEmpty()) {
             service.rimeEngine.setInput(original)
-            return false
+            restoreCandidatePage(originalPageNo)
+            return null
         }
         withContext(Dispatchers.Main) {
             service.commitText(committed + tail)
@@ -1013,7 +1106,7 @@ internal class ImeKeyRouter(private val service: XimeInputMethodService) {
             service.endComposingInputBox()
         }
         service.rimeEngine.clearComposition()
-        return true
+        return committed + tail
     }
 
     /**

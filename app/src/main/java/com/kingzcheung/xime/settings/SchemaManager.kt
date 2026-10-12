@@ -670,9 +670,15 @@ object SchemaManager {
     /** 仅从 .schema.yaml 读取显示名，不依赖编译/启用状态。 */
     fun getSchemaDisplayName(context: Context, schemaId: String): String? {
         val file = File(getRimeDir(context), "$schemaId.schema.yaml")
-        if (!file.exists()) return null
         return try {
-            val entry = yaml.decodeFromString(SchemaYaml.serializer(), file.readText().trimStart('\uFEFF')).schema
+            val schemaText = if (file.isFile) {
+                file.readText()
+            } else {
+                val assetName = "$schemaId.schema.yaml"
+                if (context.assets.list("rime")?.contains(assetName) != true) return null
+                context.assets.open("rime/$assetName").bufferedReader().use { it.readText() }
+            }
+            val entry = yaml.decodeFromString(SchemaYaml.serializer(), schemaText.trimStart('\uFEFF')).schema
             entry.name.ifEmpty { null }
         } catch (e: Exception) {
             try { Log.e(TAG, "Failed to parse schema name for $schemaId", e) } catch (_: Exception) {}

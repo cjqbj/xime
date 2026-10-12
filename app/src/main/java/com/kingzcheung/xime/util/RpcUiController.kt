@@ -1,6 +1,7 @@
 package com.kingzcheung.xime.util
 
 import android.content.Context
+import com.kingzcheung.xime.BuildConfig
 import com.kingzcheung.xime.rime.RimeEngine
 import com.kingzcheung.xime.settings.SchemaManager
 import com.kingzcheung.xime.settings.SettingsPreferences
@@ -91,6 +92,14 @@ object RpcUiController {
 
     @JvmStatic
     fun getState(key: String): String? = _state.value[key]
+
+    @JvmStatic
+    fun buildInfo(): String = JSONObject()
+        .put("version_name", BuildConfig.VERSION_NAME)
+        .put("version_code", BuildConfig.VERSION_CODE)
+        .put("git_hash", BuildConfig.GIT_HASH)
+        .put("source_fingerprint", BuildConfig.SOURCE_FINGERPRINT)
+        .toString()
 
     @JvmStatic
     fun clearState() {
